@@ -267,6 +267,15 @@ pub fn valid_identifier(manager: ManagerId, id: &str) -> bool {
     }
 }
 
+/// For the fuzz targets: parsers that sit below an adapter's listing.
+pub(crate) fn parse_softwareupdate_for_fuzzing(text: &str) -> Vec<AvailableUpdate> {
+    macos::parse_softwareupdate(text, Some(26))
+}
+
+pub(crate) fn parse_mas_line_for_fuzzing(line: &str) -> Option<(String, String, String, Option<String>)> {
+    macos::parse_mas_line(line)
+}
+
 pub(crate) fn mins(m: u64) -> Duration {
     Duration::from_secs(m * 60)
 }
