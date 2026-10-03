@@ -30,5 +30,12 @@ eframe = { version = "0.36", default-features = false, features = [
     "x11",
 ] }
 
+# Windows also gets wgpu (Direct3D 12). It runs where OpenGL is missing or
+# too old (virtual machines, Remote Desktop, basic display drivers) by
+# falling back to Microsoft's WARP software rasteriser. main.rs tries it
+# first on Windows and falls back to OpenGL.
+[target.'cfg(windows)'.dependencies]
+eframe = { version = "0.36", default-features = false, features = ["wgpu"] }
+
 [dev-dependencies]
 egui_kittest = { version = "0.36", features = ["eframe"] }

@@ -138,10 +138,8 @@ jobs:
           grep -q "## Update plan" plan.md
 
       - name: The GUI starts and keeps running
-        # Hosted Windows VMs have no GPU and only OpenGL 1.1, below what the
-        # app's OpenGL renderer needs, so there the result is reported but
-        # not fatal. (The UI itself is tested on Windows by cargo test.)
-        continue-on-error: ${{ runner.os == 'Windows' }}
+        # Hosted Windows VMs have no GPU, so this also proves the Direct3D
+        # renderer's software (WARP) path works there.
         run: |
           set +e -uo pipefail  # exit codes are checked explicitly below
           case "$RUNNER_OS" in

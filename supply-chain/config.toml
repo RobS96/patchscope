@@ -73,6 +73,10 @@ criteria = "safe-to-deploy"
 version = "0.2.2"
 criteria = "safe-to-deploy"
 
+[[exemptions.android_system_properties]]
+version = "0.1.6"
+criteria = "safe-to-deploy"
+
 [[exemptions.anstream]]
 version = "1.0.0"
 criteria = "safe-to-deploy"
@@ -597,6 +601,10 @@ criteria = "safe-to-deploy"
 version = "0.3.106"
 criteria = "safe-to-deploy"
 
+[[exemptions.khronos-egl]]
+version = "4.1.0"
+criteria = "safe-to-deploy"
+
 [[exemptions.khronos_api]]
 version = "3.1.0"
 criteria = "safe-to-deploy"
@@ -797,6 +805,10 @@ criteria = "safe-to-deploy"
 version = "0.3.55"
 criteria = "safe-to-deploy"
 
+[[exemptions.ordered-float]]
+version = "5.5.0"
+criteria = "safe-to-deploy"
+
 [[exemptions.ordered-stream]]
 version = "0.2.0"
 criteria = "safe-to-deploy"
@@ -861,6 +873,10 @@ criteria = "safe-to-deploy"
 version = "3.11.0"
 criteria = "safe-to-deploy"
 
+[[exemptions.pollster]]
+version = "1.0.1"
+criteria = "safe-to-deploy"
+
 [[exemptions.polycool]]
 version = "0.4.0"
 criteria = "safe-to-deploy"
@@ -907,6 +923,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.r-efi]]
 version = "6.0.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.range-alloc]]
+version = "0.1.5"
 criteria = "safe-to-deploy"
 
 [[exemptions.redox_syscall]]
@@ -1065,6 +1085,10 @@ criteria = "safe-to-deploy"
 version = "0.2.2"
 criteria = "safe-to-deploy"
 
+[[exemptions.spirv]]
+version = "0.2.0+1.5.4"
+criteria = "safe-to-deploy"
+
 [[exemptions.stable_deref_trait]]
 version = "1.2.1"
 criteria = "safe-to-deploy"
@@ -1087,6 +1111,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.tempfile]]
 version = "3.27.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.termcolor]]
+version = "1.4.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.terminal_size]]
@@ -1294,6 +1322,18 @@ version = "30.0.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.wgpu-core]]
+version = "30.0.1"
+criteria = "safe-to-deploy"
+
+[[exemptions.wgpu-core-deps-apple]]
+version = "30.0.1"
+criteria = "safe-to-deploy"
+
+[[exemptions.wgpu-core-deps-emscripten]]
+version = "30.0.1"
+criteria = "safe-to-deploy"
+
+[[exemptions.wgpu-core-deps-wasm]]
 version = "30.0.1"
 criteria = "safe-to-deploy"
 

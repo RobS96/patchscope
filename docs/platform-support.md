@@ -70,6 +70,7 @@ user installs; patchscope uses them when present.
 CI runs the full test suite and the end-to-end lifecycle on GitHub-hosted
 `ubuntu-24.04`, `macos-26` and `windows-2025`, and system-update
 end-to-end runs in `debian:13`, `ubuntu:24.04`, `fedora:44` and
-`archlinux:latest` containers. On hosted Windows VMs (no GPU, OpenGL
-1.1) the app's window cannot be created, so the Windows "GUI starts"
-check is informational; the UI logic is tested there by `cargo test`. See [testing.md](testing.md).
+`archlinux:latest` containers. The Windows app draws with Direct3D 12
+(falling back to Microsoft's WARP software rasteriser when there is no
+GPU, as on the hosted runners and in many VMs and Remote Desktop
+sessions) and tries OpenGL if Direct3D is unavailable. See [testing.md](testing.md).
