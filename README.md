@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/RobS96/patchscope/actions/workflows/ci.yml/badge.svg)](https://github.com/RobS96/patchscope/actions/workflows/ci.yml)
 [![End-to-end](https://github.com/RobS96/patchscope/actions/workflows/e2e.yml/badge.svg)](https://github.com/RobS96/patchscope/actions/workflows/e2e.yml)
-[![CodeQL](https://github.com/RobS96/patchscope/actions/workflows/codeql.yml/badge.svg)](https://github.com/RobS96/patchscope/actions/workflows/codeql.yml)
+[![CodeQL](https://github.com/RobS96/patchscope/actions/workflows/github-code-scanning/codeql/badge.svg)](https://github.com/RobS96/patchscope/security/code-scanning)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/RobS96/patchscope/badge)](https://scorecard.dev/viewer/?uri=github.com/RobS96/patchscope)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 

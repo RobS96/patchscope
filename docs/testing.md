@@ -21,7 +21,8 @@ every level from parsers to real machines.
 - `cargo deny check`: advisories, banned sources, licence allow-list
 - `cargo vet check`: every dependency audited by a trusted organisation
   or explicitly exempted
-- CodeQL (Rust and workflow files), OpenSSF Scorecard, dependency review
+- CodeQL default setup, extended query suite (Rust and workflow files),
+  OpenSSF Scorecard, dependency review
 - release packaging is built and smoke-tested on every run, not just at
   release time
 
