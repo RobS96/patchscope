@@ -1,0 +1,24 @@
+[package]
+name = "patchscope-cli"
+description = "Command-line front end for patchscope: scan, research, plan and apply updates on Windows, macOS and Linux."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "patchscope"
+path = "src/main.rs"
+
+[dependencies]
+patchscope-core = { path = "../patchscope-core", version = "0.1.0" }
+clap = { version = "4.6", features = ["derive", "wrap_help"] }
+serde_json = "1"
+
+[dev-dependencies]
+tempfile = "3"

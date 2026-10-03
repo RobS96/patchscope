@@ -1,0 +1,10 @@
+/target
+**/*.rs.bk
+.DS_Store
+# SBOMs are generated per release by CI, not committed.
+sbom.json
+# Reports a local run writes; they describe a real machine.
+/patchscope-report*
+/reports/
+# Claude Code sandbox bookkeeping
+.claude/

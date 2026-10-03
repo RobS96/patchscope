@@ -1,0 +1,98 @@
+{
+ "schema_version": "1.2.1",
+ "result": {
+  "name": "macos",
+  "links": {
+   "icon": "https://cdn.jsdelivr.net/npm/simple-icons/icons/macos.svg",
+   "html": "https://endoflife.date/macos",
+   "releasePolicy": null
+  },
+  "releases": [
+   {
+    "name": "27",
+    "codename": "Golden Gate",
+    "label": "macOS 27 (Golden Gate)",
+    "releaseDate": "2026-09-14",
+    "isLts": false,
+    "ltsFrom": null,
+    "isEol": false,
+    "eolFrom": null,
+    "isMaintained": true,
+    "latest": {
+     "name": "27.0.1",
+     "date": "2026-09-28",
+     "link": "https://developer.apple.com/documentation/macos-release-notes/macos-27-release-notes"
+    },
+    "custom": null
+   },
+   {
+    "name": "26",
+    "codename": "Tahoe",
+    "label": "macOS 26 (Tahoe)",
+    "releaseDate": "2025-09-15",
+    "isLts": false,
+    "ltsFrom": null,
+    "isEol": false,
+    "eolFrom": null,
+    "isMaintained": true,
+    "latest": {
+     "name": "26.7.2",
+     "date": "2026-09-28",
+     "link": "https://developer.apple.com/documentation/macos-release-notes/macos-26-release-notes"
+    },
+    "custom": null
+   },
+   {
+    "name": "15",
+    "codename": "Sequoia",
+    "label": "macOS 15 (Sequoia)",
+    "releaseDate": "2024-09-16",
+    "isLts": false,
+    "ltsFrom": null,
+    "isEol": false,
+    "eolFrom": null,
+    "isMaintained": true,
+    "latest": {
+     "name": "15.8.1",
+     "date": "2026-09-28",
+     "link": "https://developer.apple.com/documentation/macos-release-notes/macos-15-release-notes"
+    },
+    "custom": null
+   },
+   {
+    "name": "14",
+    "codename": "Sonoma",
+    "label": "macOS 14 (Sonoma)",
+    "releaseDate": "2023-09-26",
+    "isLts": false,
+    "ltsFrom": null,
+    "isEol": true,
+    "eolFrom": "2026-09-14",
+    "isMaintained": false,
+    "latest": {
+     "name": "14.8.9",
+     "date": "2026-08-06",
+     "link": "https://developer.apple.com/documentation/macos-release-notes/macos-14-release-notes"
+    },
+    "custom": null
+   },
+   {
+    "name": "13",
+    "codename": "Ventura",
+    "label": "macOS 13 (Ventura)",
+    "releaseDate": "2022-10-24",
+    "isLts": false,
+    "ltsFrom": null,
+    "isEol": true,
+    "eolFrom": "2025-09-15",
+    "isMaintained": false,
+    "latest": {
+     "name": "13.7.8",
+     "date": "2025-08-20",
+     "link": "https://developer.apple.com/documentation/macos-release-notes/macos-13-release-notes"
+    },
+    "custom": null
+   }
+  ]
+ }
+}

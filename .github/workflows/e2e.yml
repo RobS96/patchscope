@@ -1,0 +1,270 @@
+name: End-to-end
+
+# patchscope against real operating systems: real discovery, real research
+# APIs (OSV.dev, CISA KEV, FIRST EPSS, endoflife.date) and real installs, on
+# throwaway GitHub runners and containers only. Weekly as well, because the
+# APIs and package managers it depends on change without a commit here.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: read
+
+jobs:
+  # Each desktop OS: inventory, then the full lifecycle on a deliberately
+  # vulnerable npm package (minimist 1.2.0, GHSA-vh95-rmgr-6w4m):
+  # found → researched → planned → installed → verified → gone on rescan.
+  # Then the GUI must start and keep running.
+  native:
+    name: Native (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-26, windows-2025]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Install Linux build deps (GUI windowing) and a virtual display
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libx11-dev libxkbcommon-dev libxkbcommon-x11-dev libgl1-mesa-dev pkg-config xvfb
+
+      - name: Install the stable toolchain
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Build
+        run: cargo build --locked --release -p patchscope-cli -p patchscope-gui
+
+      - name: Research services answer as the parsers expect (live)
+        run: cargo test --locked --release -p patchscope-core --test live -- --ignored
+
+      - name: Put the CLI on PATH
+        run: echo "$GITHUB_WORKSPACE/target/release" >> "$GITHUB_PATH"
+
+      - name: Inventory this runner
+        run: |
+          set -euo pipefail
+          # Windows Update is exercised in its own step below (it can take minutes).
+          patchscope discover --skip-manager windows-update --format json -o inventory.json
+          jq -e '
+            .os.name != "" and .os.version != "" and
+            .hardware.cpu.logical_cores > 0 and .hardware.memory.total_bytes > 0 and
+            (.hardware.disks | length) > 0 and
+            ([.managers[] | select(.id == "npm-global" and .available)] | length) == 1
+          ' inventory.json
+          jq '{os: .os.name, model: .hardware.model, cpu: .hardware.cpu.brand,
+               managers: [.managers[] | select(.available) | {id, installed: (.installed|length), updates: (.updates|length), error}]}' inventory.json
+
+      - name: Native package manager was read
+        run: |
+          set -euo pipefail
+          case "$RUNNER_OS" in
+            Linux)   jq -e '.managers[] | select(.id == "apt") | .available and .error == null and (.installed | length) > 100
+                            and (.installed[0].ecosystem == "Ubuntu:24.04:LTS")' inventory.json ;;
+            macOS)   jq -e '.managers[] | select(.id == "homebrew") | .available and .error == null and (.installed | length) > 0' inventory.json
+                     # Apple's catalogue is slow or unreachable on some hosted runners; presence is what is checked.
+                     jq -e '.managers[] | select(.id == "softwareupdate") | .available' inventory.json ;;
+            Windows) jq -e '.managers[] | select(.id == "chocolatey") | .available and .error == null and (.installed | length) > 0' inventory.json ;;
+          esac
+
+      - name: Plant a known-vulnerable package
+        run: npm install --global --no-fund --no-audit minimist@1.2.0
+
+      - name: Scan finds and explains it
+        run: |
+          set -uo pipefail
+          patchscope scan --manager npm-global --save scan.json --format json -o scan-out.json
+          rc=$?
+          # 2 = findings at or above the --fail-on threshold; expected here.
+          [ "$rc" -eq 0 ] || [ "$rc" -eq 2 ] || exit 1
+          set -e
+          jq -e '.analysis.sources[] | select(.name == "OSV.dev") | .ok' scan.json
+          jq -e '.analysis.findings[] | select(.id == "vuln:npm-global:minimist")
+                 | (.advisories | map(.id) | index("GHSA-vh95-rmgr-6w4m")) != null
+                 and .remediation.update_keys == ["npm-global:minimist"]
+                 and ([.advisories[].aliases[]] | index("CVE-2020-7598")) != null' scan.json
+          jq '.analysis.findings[] | select(.id == "vuln:npm-global:minimist") | {severity, title, rationale}' scan.json
+
+      - name: Dry run changes nothing
+        run: |
+          set -euo pipefail
+          patchscope apply --from scan.json --only npm-global:minimist --dry-run
+          npm ls --global minimist --json | jq -e '.dependencies.minimist.version == "1.2.0"'
+
+      - name: Apply installs and verifies the fix
+        run: |
+          set -euo pipefail
+          patchscope apply --from scan.json --only npm-global:minimist --yes | tee apply.txt
+          grep -q "1 verified" apply.txt
+          npm ls --global minimist --json | jq -e '.dependencies.minimist.version != "1.2.0"'
+
+      - name: Rescan shows it resolved
+        run: |
+          set -uo pipefail
+          patchscope scan --manager npm-global --format json -o after.json
+          [ $? -le 2 ] || exit 1
+          set -e
+          jq -e '[.analysis.findings[] | select(.subject == "minimist")] | length == 0' after.json
+
+      - name: Reports render
+        run: |
+          set -euo pipefail
+          patchscope plan --from scan.json --format html -o plan.html
+          patchscope plan --from scan.json --format markdown -o plan.md
+          grep -q "Content-Security-Policy" plan.html
+          grep -q "## Update plan" plan.md
+
+      - name: The GUI starts and keeps running
+        # Hosted Windows VMs have no GPU and only OpenGL 1.1, below what the
+        # app's OpenGL renderer needs, so there the result is reported but
+        # not fatal. (The UI itself is tested on Windows by cargo test.)
+        continue-on-error: ${{ runner.os == 'Windows' }}
+        run: |
+          set -uo pipefail
+          case "$RUNNER_OS" in
+            Linux)
+              xvfb-run -a timeout 20 target/release/patchscope-gui
+              rc=$?
+              [ "$rc" -eq 124 ] || { echo "GUI exited early with $rc"; exit 1; } ;;
+            macOS)
+              target/release/patchscope-gui & pid=$!
+              sleep 20
+              kill -0 "$pid" || { echo "GUI exited early"; exit 1; }
+              kill "$pid" ;;
+            Windows)
+              # shellcheck disable=SC2016  # PowerShell expands these, not bash
+              pwsh -NoProfile -Command '
+                $p = Start-Process -FilePath target/release/patchscope-gui.exe -PassThru
+                Start-Sleep -Seconds 20
+                if ($p.HasExited) { Write-Error "GUI exited early with $($p.ExitCode)"; exit 1 }
+                Stop-Process -Id $p.Id' ;;
+          esac
+
+      - name: Windows Update search (read-only)
+        if: runner.os == 'Windows'
+        # The hosted image's update service is outside this repository's
+        # control; a failure here is reported, not fatal.
+        continue-on-error: true
+        timeout-minutes: 20
+        run: |
+          set -euo pipefail
+          patchscope discover --manager windows-update --format json -o wu.json
+          jq -e '.managers[] | select(.id == "windows-update") | .available and .error == null' wu.json
+          jq '.managers[] | select(.id == "windows-update") | .updates | map({name, available_version, security})' wu.json
+
+  # Linux distributions with real native package managers, as root in
+  # throwaway containers: refresh, scan, apply everything, and prove the
+  # distribution's manager has nothing left to offer.
+  build-linux:
+    name: Build for containers
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Install the stable toolchain
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: cargo build --locked --release -p patchscope-cli
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: patchscope-linux
+          path: target/release/patchscope
+          if-no-files-found: error
+          retention-days: 3
+
+  distro:
+    name: Distro (${{ matrix.image }})
+    needs: build-linux
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    container: ${{ matrix.image }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: debian:13
+            manager: apt
+            setup: apt-get update && apt-get install -y ca-certificates jq
+          - image: ubuntu:24.04
+            manager: apt
+            setup: apt-get update && apt-get install -y ca-certificates jq
+          - image: fedora:44
+            manager: dnf
+            setup: dnf install -y jq
+          - image: archlinux:latest
+            manager: pacman
+            # Sync and add jq + checkupdates (+ the fakeroot it needs) only;
+            # the rest is left for patchscope to find and upgrade. A partial
+            # upgrade is acceptable in a throwaway container.
+            setup: pacman -Sy --noconfirm jq pacman-contrib fakeroot
+    steps:
+      - name: Prepare
+        run: ${{ matrix.setup }}
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: patchscope-linux
+
+      - name: Refresh, scan, apply, verify
+        shell: bash
+        env:
+          MANAGER: ${{ matrix.manager }}
+        run: |
+          set -uo pipefail
+          chmod +x patchscope && mv patchscope /usr/local/bin/
+          # A fresh image can have hundreds of updates; lift the default cap.
+          printf '[apply]\nmax_actions = 100000\n' > policy.toml
+          patchscope refresh --elevation none
+          patchscope scan --save scan.json --format json -o scan-out.json
+          [ $? -le 2 ] || exit 1
+          set -e
+          jq -e --arg m "$MANAGER" '.report.managers[] | select(.id == $m) | .available and .error == null and (.installed | length) > 0' scan.json
+          jq -e '.report.os.distro_id != null' scan.json
+          jq --arg m "$MANAGER" '{os: .report.os.name,
+               updates: ([.report.managers[] | select(.id == $m) | .updates[]] | length),
+               findings: .analysis.summary, sources: .analysis.sources}' scan.json
+          if [ "$MANAGER" = apt ]; then
+            # Debian/Ubuntu packages are researched against OSV by source package.
+            jq -e '.analysis.sources[] | select(.name == "OSV.dev") | .ok' scan.json
+          fi
+
+          set +e
+          patchscope --policy policy.toml apply --from scan.json --yes --elevation none
+          rc=$?
+          set -e
+          [ "$rc" -eq 0 ] || { echo "apply reported failures (exit $rc)"; exit 1; }
+
+          patchscope discover --manager "$MANAGER" --format json -o after.json
+          left=$(jq --arg m "$MANAGER" '[.managers[] | select(.id == $m) | .updates[]] | length' after.json)
+          echo "updates left: $left"
+          jq --arg m "$MANAGER" '.managers[] | select(.id == $m) | .updates' after.json
+          [ "$left" -eq 0 ]

@@ -1,0 +1,30 @@
+[package]
+name = "patchscope-core"
+description = "Discovery, vulnerability research, update planning and update execution for Windows, macOS and Linux."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+sysinfo = { version = "0.39", default-features = false, features = ["system", "disk", "network", "component"] }
+wait-timeout = "0.2"
+cvss = "3"
+toml = "1"
+directories = "6"
+# TLS 1.3 with the aws-lc-rs provider (hybrid post-quantum key exchange by
+# default) and the operating system's certificate store, so a corporate or
+# filtering proxy CA the OS already trusts is honoured.
+ureq = { version = "3.4", default-features = false, features = ["rustls-no-provider", "platform-verifier", "gzip"] }
+rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std", "tls12"] }
+
+[dev-dependencies]
+tempfile = "3"

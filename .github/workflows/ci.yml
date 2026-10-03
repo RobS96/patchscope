@@ -1,0 +1,365 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Install Linux build deps (GUI windowing)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libx11-dev libxkbcommon-dev libxkbcommon-x11-dev libgl1-mesa-dev pkg-config
+
+      # The runner's own rustup, as the MSRV job uses: no third-party action
+      # stands between the checkout and the compiler.
+      - name: Install the stable toolchain
+        shell: bash
+        run: |
+          rustup toolchain install stable --profile minimal --component rustfmt --component clippy
+          rustup default stable
+          rustc --version
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          # Only main saves a cache. A PR restores main's and does not save its
+          # own: three OSes of per-branch caches ran the repo past GitHub's
+          # 10 GB limit, which evicts the caches main needs.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Format
+        run: cargo fmt --all --check
+
+      - name: Clippy
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
+
+      - name: Test
+        run: cargo test --locked --workspace
+
+      - name: Build
+        run: cargo build --locked --workspace --release
+
+      # cargo-deny and cargo-vet check the whole dependency graph whatever
+      # the host, so one matrix leg is enough. Both are built from crates.io
+      # at pinned versions: a new release of either cannot change what the
+      # gate checks without a change here, and no extra action is needed.
+      - name: Install cargo-deny + cargo-vet
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo install --locked cargo-deny@0.19.9 cargo-vet@0.10.2
+
+      # The full check: deny.toml configures advisories, bans, licenses and
+      # sources, and a narrower invocation would stop enforcing the rest.
+      - name: Supply-chain advisories/bans/licenses/sources gate
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo deny check
+
+      - name: Supply-chain provenance gate
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo vet check --locked
+
+  # The versions Cargo.toml declares as the minimum must actually build.
+  msrv:
+    name: MSRV
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Install Linux build deps (GUI windowing)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libx11-dev libxkbcommon-dev libxkbcommon-x11-dev libgl1-mesa-dev pkg-config
+
+      - name: Install the declared toolchain
+        run: rustup toolchain install 1.95 --profile minimal
+
+      - name: The workspace on 1.95
+        run: cargo +1.95 check --locked --workspace --all-targets
+
+  # One CycloneDX SBOM per crate and platform, shipped inside each archive.
+  # Generated on every run rather than committed, so it always describes the
+  # dependencies this build resolved. cargo-cyclonedx is not part of the
+  # dependency set cargo-vet and cargo-deny gate, so it is built and run
+  # here, in a job of its own that never sees the release binaries; the
+  # package jobs only download its output. The SBOM for a target comes from
+  # cargo's metadata and needs no compiler for that target.
+  sbom:
+    name: SBOMs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Generate
+        run: |
+          set -euo pipefail
+          cargo install --locked cargo-cyclonedx@0.5.9
+          # The macOS archive is a universal binary; its SBOM is the arm64
+          # one, as it was when the macOS runner generated it natively.
+          while read -r label target <&3; do
+            cargo cyclonedx --format json --override-filename sbom --target "$target"
+            mkdir -p "sbom/$label"
+            for crate in patchscope-core patchscope-cli patchscope-gui; do
+              mv "$crate/sbom.json" "sbom/$label/$crate.cdx.json"
+              jq -e '.bomFormat == "CycloneDX"' "sbom/$label/$crate.cdx.json" >/dev/null
+            done
+          done 3<<'TARGETS'
+          linux-x86_64 x86_64-unknown-linux-gnu
+          macos-universal aarch64-apple-darwin
+          windows-x86_64 x86_64-pc-windows-msvc
+          TARGETS
+          ls -l sbom/*
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sbom
+          path: sbom/
+          if-no-files-found: error
+          retention-days: 7
+
+  # Builds exactly what a release ships, on every run, so a break in
+  # packaging is found on the pull request and not after a tag is public.
+  # Read-only token, and nothing runs here but the checkout, the toolchain
+  # and cargo on the locked, vetted dependency tree. The runner images are
+  # named, not "latest": the Linux image sets the oldest glibc the binaries
+  # run on, and that should change in a commit, not when GitHub repoints a
+  # label.
+  package:
+    name: Package (${{ matrix.label }})
+    needs: sbom
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The oldest glibc the Linux binaries need is this image's (2.35),
+          # so they run on Debian 12, Ubuntu 22.04+, Fedora and Arch.
+          - os: ubuntu-22.04
+            label: linux-x86_64
+          - os: macos-26
+            label: macos-universal
+          - os: windows-2025
+            label: windows-x86_64
+    env:
+      # A tag name on a release run; a placeholder otherwise.
+      VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || 'dev' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Install Linux build deps (GUI windowing)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libx11-dev libxkbcommon-dev libxkbcommon-x11-dev libgl1-mesa-dev pkg-config
+
+      - name: Install the stable toolchain
+        shell: bash
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustc --version
+
+      - name: Build
+        if: runner.os != 'macOS'
+        run: cargo build --locked --workspace --release
+
+      - name: Build (universal binary)
+        if: runner.os == 'macOS'
+        run: |
+          rustup target add x86_64-apple-darwin aarch64-apple-darwin
+          cargo build --locked --workspace --release --target x86_64-apple-darwin
+          cargo build --locked --workspace --release --target aarch64-apple-darwin
+          mkdir -p target/release
+          for bin in patchscope patchscope-gui; do
+            lipo -create \
+              target/x86_64-apple-darwin/release/$bin \
+              target/aarch64-apple-darwin/release/$bin \
+              -output target/release/$bin
+          done
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: sbom
+          path: sbom-all
+
+      - name: Package
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p stage/sbom dist
+          cp README.md LICENSE CHANGELOG.md stage/
+          cp sbom-all/${{ matrix.label }}/*.cdx.json stage/sbom/
+          test "$(find stage/sbom -type f | wc -l)" -eq 3
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            cp target/release/patchscope.exe target/release/patchscope-gui.exe stage/
+            7z a "dist/patchscope-${VERSION}-${{ matrix.label }}.zip" ./stage/*
+          else
+            cp target/release/patchscope target/release/patchscope-gui stage/
+            tar -czf "dist/patchscope-${VERSION}-${{ matrix.label }}.tar.gz" -C stage .
+          fi
+
+      # Named per platform: all three end up in one release, and a shared
+      # name would leave only one job's checksums.
+      - name: Checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist
+          if command -v sha256sum >/dev/null; then
+            sha256sum patchscope-* > "SHA256SUMS-${{ matrix.label }}.txt"
+          else
+            shasum -a 256 patchscope-* > "SHA256SUMS-${{ matrix.label }}.txt"
+          fi
+          cat "SHA256SUMS-${{ matrix.label }}.txt"
+
+      - name: The packaged CLI runs
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir unpacked
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            7z x dist/patchscope-*.zip -ounpacked >/dev/null
+            bin=unpacked/patchscope.exe
+          else
+            tar -xzf dist/patchscope-*.tar.gz -C unpacked
+            bin=unpacked/patchscope
+          fi
+          # A real inventory of this runner, offline: it must name the OS
+          # and see a CPU and memory.
+          "$bin" discover --manager npm-global --format json -o inventory.json
+          jq -e '.os.name != "" and .hardware.cpu.logical_cores > 0 and .hardware.memory.total_bytes > 0' inventory.json
+
+      # A release cannot be corrected once it is public (immutable releases,
+      # protected tags), so what the archive says about itself is checked on
+      # every run: the binary's version against the workspace version and
+      # the two path dependencies, and on a release run the tag and the
+      # changelog heading as well.
+      - name: Versions agree
+        shell: bash
+        run: |
+          set -euo pipefail
+          crate=$(sed -n '/^\[workspace\.package\]/,/^\[/s/^version = "\(.*\)"$/\1/p' Cargo.toml)
+          [ -n "$crate" ] || { echo "no workspace version in Cargo.toml"; exit 1; }
+          bin=unpacked/patchscope
+          if [ "$RUNNER_OS" = "Windows" ]; then bin=unpacked/patchscope.exe; fi
+          reported=$("$bin" --version | tr -d '\r')
+          [ "$reported" = "patchscope $crate" ] || { echo "the binary reports '$reported'; Cargo.toml says $crate"; exit 1; }
+          for manifest in patchscope-cli/Cargo.toml patchscope-gui/Cargo.toml; do
+            grep -q "^patchscope-core = { path = \"../patchscope-core\", version = \"$crate\" }" "$manifest" \
+              || { echo "$manifest does not depend on patchscope-core $crate"; exit 1; }
+          done
+          if [ "$VERSION" != dev ]; then
+            [ "$VERSION" = "v$crate" ] || { echo "tag $VERSION, crate version $crate"; exit 1; }
+            grep -q "^## \[$crate\] - " CHANGELOG.md || { echo "CHANGELOG.md has no heading for $crate"; exit 1; }
+          fi
+          echo "patchscope $crate"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dist-${{ matrix.label }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  # Runs no code from the repository or its dependencies: it downloads what
+  # the package jobs built, attests it and publishes. The write permissions
+  # live only here. All three platforms must have built, and the release is
+  # created as a draft and published once every file is attached, so there
+  # is never a public release with files missing.
+  publish:
+    name: Publish release
+    # A pushed tag only: "Run workflow" on a tag would rebuild and attest
+    # binaries that were never the released ones.
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: [test, msrv, package]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      # A release is cut only from a signed annotated tag that GitHub
+      # verifies, on a commit already on main, so it has been through the
+      # branch's required checks. Asked of the API: this job still runs
+      # nothing from the repository.
+      - name: Tag is signed and on main
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          ref=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$GITHUB_REF_NAME")
+          [ "$(jq -r .object.type <<<"$ref")" = tag ] \
+            || { echo "::error::$GITHUB_REF_NAME is a lightweight tag; a release needs a signed annotated one"; exit 1; }
+          tag=$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$(jq -r .object.sha <<<"$ref")")
+          [ "$(jq -r .verification.verified <<<"$tag")" = true ] \
+            || { echo "::error::the tag's signature is not verified ($(jq -r .verification.reason <<<"$tag"))"; exit 1; }
+          [ "$(jq -r .object.sha <<<"$tag")" = "$GITHUB_SHA" ] \
+            || { echo "::error::the tag does not point at the commit this run built"; exit 1; }
+          # "identical" or "behind": main contains the tagged commit.
+          state=$(gh api "repos/$GITHUB_REPOSITORY/compare/main...$GITHUB_SHA" --jq .status)
+          case "$state" in
+            identical|behind) echo "$GITHUB_REF_NAME: signed, verified, on main" ;;
+            *) echo "::error::$GITHUB_SHA is not on main (compare status: $state)"; exit 1 ;;
+          esac
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: dist-*
+          path: dist
+          merge-multiple: true
+
+      - name: List release files
+        run: ls -l dist && test "$(find dist -type f | wc -l)" -eq 6
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/patchscope-*
+
+      - name: Create draft release, attach files, publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # A re-run after a failure part-way finds the draft and completes
+          # it; a release that is already public is never touched.
+          if draft=$(gh release view "$GITHUB_REF_NAME" --json isDraft --jq .isDraft 2>/dev/null); then
+            [ "$draft" = true ] || { echo "::error::release $GITHUB_REF_NAME is already published"; exit 1; }
+            gh release upload "$GITHUB_REF_NAME" --clobber dist/*
+          else
+            gh release create "$GITHUB_REF_NAME" --draft --verify-tag --title "$GITHUB_REF_NAME" \
+              --notes "See [CHANGELOG.md](https://github.com/${GITHUB_REPOSITORY}/blob/${GITHUB_REF_NAME}/CHANGELOG.md) for details. Verify a download with the SHA256SUMS file for your platform and \`gh attestation verify <archive> --repo ${GITHUB_REPOSITORY} --signer-workflow ${GITHUB_REPOSITORY}/.github/workflows/ci.yml\`." \
+              dist/*
+          fi
+          gh release edit "$GITHUB_REF_NAME" --draft=false
