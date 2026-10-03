@@ -30,23 +30,20 @@ To switch it on:
    → Integrations → App Store Connect API → **+**, role *Developer*.
    Download the `AuthKey_XXXX.p8` (it can be downloaded only once) and note
    the Key ID and Issuer ID.
-4. **Store the credentials in the `release-signing` environment** (it
-   exists already, requires your approval for every run, and only accepts
-   `v*` tags). Each value goes in on stdin, never on the command line:
+4. **Store the credentials** with one command, from the repository:
 
    ```bash
-   R=RobS96/patchscope; E=release-signing
-   base64 -i DeveloperID.p12 | gh secret set MACOS_CERT_P12_BASE64 --env $E -R $R
-   gh secret set MACOS_CERT_PASSWORD   --env $E -R $R      # prompts; paste the .p12 password
-   gh secret set MACOS_SIGNING_IDENTITY --env $E -R $R     # e.g. Developer ID Application: Your Name (TEAMID)
-   gh secret set APPLE_API_KEY_P8      --env $E -R $R < AuthKey_XXXX.p8
-   gh secret set APPLE_API_KEY_ID      --env $E -R $R      # the Key ID
-   gh secret set APPLE_API_ISSUER_ID   --env $E -R $R      # the Issuer ID
-   gh variable set MACOS_SIGNING --body true -R $R
+   scripts/enable-macos-signing.sh ~/Downloads/DeveloperID.p12 ~/Downloads/AuthKey_XXXX.p8
    ```
 
-   Then delete the local `.p12` and `.p8` copies (keep the certificate in
-   your login keychain).
+   It asks for the `.p12` password and the Issuer ID, reads the signing
+   identity from the certificate (and refuses anything that is not a
+   *Developer ID Application* certificate), puts all six values into the
+   `release-signing` environment and sets `MACOS_SIGNING=true`. That
+   environment already exists, requires your approval for every run and
+   only accepts `v*` tags. Every value reaches `gh` on stdin, never on the
+   command line. Afterwards, delete the local `.p12` and `.p8` copies (keep
+   the certificate in your login keychain).
 5. **Release as usual** (signed tag `vX.Y.Z` on `main`). The run pauses at
    *Sign and notarise (macOS)* until you approve the `release-signing`
    deployment in the Actions tab. If signing or notarisation fails, nothing
