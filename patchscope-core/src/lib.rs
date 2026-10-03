@@ -17,6 +17,8 @@ pub mod analysis;
 pub mod apply;
 pub mod discover;
 pub mod exec;
+#[doc(hidden)]
+pub mod fuzzing;
 pub mod managers;
 pub mod model;
 pub mod paths;

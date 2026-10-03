@@ -1,0 +1,67 @@
+name: Fuzz
+
+# libFuzzer over every parser patchscope points at text it does not
+# control (package-manager output, vendor tools, research-service JSON),
+# and over the whole analyse → plan → report path with its safety
+# invariants (see patchscope-core/src/fuzzing.rs). Short runs on every
+# change, long runs weekly.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "29 3 * * 0"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fuzz:
+    name: Fuzz (${{ matrix.target }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [manager_output, research_data, pipeline, policy_and_text]
+    env:
+      # Seconds per target: one minute per change, fifteen on the schedule.
+      SECONDS_TO_RUN: ${{ github.event_name == 'schedule' && '900' || '60' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      # cargo-fuzz needs nightly for the sanitizer flags. Built from
+      # crates.io at a pinned version, like the other CI tools.
+      - name: Install nightly and cargo-fuzz
+        run: |
+          rustup toolchain install nightly --profile minimal
+          cargo +nightly install --locked cargo-fuzz@0.13.2
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          workspaces: fuzz
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Fuzz
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          mkdir -p "fuzz/corpus/$TARGET"
+          seeds=()
+          if [ -d "fuzz/seeds/$TARGET" ]; then seeds=("fuzz/seeds/$TARGET"); fi
+          cargo +nightly fuzz run --fuzz-dir fuzz "$TARGET" "fuzz/corpus/$TARGET" "${seeds[@]}" -- \
+            -max_total_time="$SECONDS_TO_RUN" -rss_limit_mb=2048 -timeout=30
+
+      - name: Keep the crashing input
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: fuzz-crash-${{ matrix.target }}
+          path: fuzz/artifacts/
+          if-no-files-found: ignore
+          retention-days: 30

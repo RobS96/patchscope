@@ -6,6 +6,15 @@ uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Fuzzing: four cargo-fuzz targets (package-manager output, research and
+  discovery parsers, the analyse → plan → report pipeline with its safety
+  invariants, policy and text utilities), run on every change and weekly.
+- Optional Developer ID signing and notarisation of the macOS binaries in
+  the release pipeline, behind an approval-gated environment
+  (docs/code-signing.md).
+
 ## [0.1.0] - 2026-10-03
 
 ### Added

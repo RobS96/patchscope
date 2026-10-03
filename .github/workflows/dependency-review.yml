@@ -20,3 +20,8 @@ jobs:
         with:
           fail-on-severity: moderate
           allow-licenses: MIT, Apache-2.0, Apache-2.0 WITH LLVM-exception, BSD-2-Clause, BSD-3-Clause, ISC, Unicode-3.0, Zlib, BSL-1.0, OFL-1.1, Ubuntu-font-1.0, CDLA-Permissive-2.0, MPL-2.0
+          # Never shipped, so outside the allow-list above, named one by one:
+          # libfuzzer-sys ((MIT OR Apache-2.0) AND NCSA, LLVM's permissive
+          # licence) is linked only into the fuzz binaries; the rust-cache
+          # action (LGPL-3.0) runs on CI and is not distributed.
+          allow-dependencies-licenses: pkg:cargo/libfuzzer-sys, pkg:githubactions/Swatinem/rust-cache

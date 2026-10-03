@@ -1,0 +1,22 @@
+# Example patchscope policy. Copy to the path `patchscope policy path`
+# prints, or pass it with --policy. Every key is optional; anything
+# unknown is an error.
+
+[apply]
+# Never planned or installed, in addition to the built-in defaults
+# (*xcode*, mas:497799835). Patterns match "manager:id", "manager:name",
+# the id or the name, case-insensitively; * is a wildcard.
+protected = [
+    "homebrew:postgresql@*",  # database servers: upgrade deliberately
+    "apt:linux-image-*",      # kernels: on a maintenance window
+]
+default_protection = true        # false drops the built-in Xcode protection
+allow_os_upgrades = false        # new major OS versions
+allow_restart_required = true    # updates that finish after a restart
+security_only = false            # only updates tied to a security finding
+min_severity = "info"            # info | low | medium | high | critical
+max_actions = 100
+
+[managers]
+# Never queried or updated.
+disabled = []

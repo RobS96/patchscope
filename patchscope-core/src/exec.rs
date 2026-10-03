@@ -360,6 +360,8 @@ fn signal_tree(pid: u32, interactive: bool, signal: &str) {
 pub struct FakeRunner {
     programs: Vec<String>,
     responses: HashMap<String, Vec<CommandOutput>>,
+    /// Answer for every program and command line not otherwise recorded.
+    fallback: Option<CommandOutput>,
     calls: Mutex<Vec<CommandSpec>>,
 }
 
@@ -386,6 +388,13 @@ impl FakeRunner {
         self
     }
 
+    /// Every program exists and every unrecorded command gets `output`
+    /// (used by the fuzz targets to feed one input to every adapter).
+    pub fn answer_everything(mut self, output: CommandOutput) -> Self {
+        self.fallback = Some(output);
+        self
+    }
+
     pub fn calls(&self) -> Vec<CommandSpec> {
         self.calls.lock().expect("calls lock").clone()
     }
@@ -397,9 +406,7 @@ impl FakeRunner {
 
 impl CommandRunner for FakeRunner {
     fn which(&self, program: &str) -> Option<PathBuf> {
-        self.programs
-            .iter()
-            .any(|p| p == program)
+        (self.fallback.is_some() || self.programs.iter().any(|p| p == program))
             .then(|| PathBuf::from(format!("/fake/{program}")))
     }
 
@@ -412,6 +419,7 @@ impl CommandRunner for FakeRunner {
         };
         match self.responses.get(&key) {
             Some(list) => Ok(list[(n - 1).min(list.len() - 1)].clone()),
+            None if self.fallback.is_some() => Ok(self.fallback.clone().unwrap_or_default()),
             None if self.which(&spec.program).is_some() => Ok(CommandOutput::with_status(
                 127,
                 "",

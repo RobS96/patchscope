@@ -56,7 +56,8 @@ sha256sum -c SHA256SUMS-linux-x86_64.txt
   Windows Update or Chocolatey updates, right-click it and choose
   **Run as administrator**.
 - **macOS:** extract, then run `./patchscope-gui` from Terminal. The
-  binaries are not notarised, so Finder blocks a double-click. To allow
+  binaries are not yet notarised ([why, and the plan](docs/code-signing.md)),
+  so Finder blocks a double-click. To allow
   it once: `xattr -d com.apple.quarantine patchscope-gui patchscope`.
 - **Linux:** extract and run `./patchscope-gui`. You'll get a graphical
   password prompt when an update needs root.
@@ -216,8 +217,11 @@ Every push is tested on Linux, macOS and Windows, at three levels:
    manager must report nothing left. The live research APIs are checked
    against the parsers' expectations.
 
-Plus `cargo deny` (advisories, licences, sources), `cargo vet` (supply
-chain), CodeQL, OpenSSF Scorecard, and dependency review on pull requests.
+Plus fuzzing ([fuzz.yml](.github/workflows/fuzz.yml): libFuzzer over every
+parser and the whole analyse → plan → report path, checking that nothing
+unsafe is ever planned and no report contains a script), `cargo deny`
+(advisories, licences, sources), `cargo vet` (supply chain), CodeQL,
+OpenSSF Scorecard, and dependency review on pull requests.
 See [docs/testing.md](docs/testing.md).
 
 ## Documentation
@@ -228,6 +232,7 @@ See [docs/testing.md](docs/testing.md).
 - [Architecture](docs/architecture.md): crates, data flow, adding a package manager
 - [Platform support](docs/platform-support.md): per-OS details and known caveats
 - [Testing](docs/testing.md): how it is tested and how to run each level
+- [Code signing](docs/code-signing.md): what signing needs and how to switch it on
 - [Contributing](CONTRIBUTING.md) · [Security policy](SECURITY.md) · [Changelog](CHANGELOG.md)
 
 ## License

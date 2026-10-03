@@ -50,7 +50,8 @@ refused, and Windows UpdateIDs must be GUIDs; strict policy parsing;
 confirmation before any change; verification and an append-only audit log
 (0600); a run lock; timeouts with process-tree kill on every command;
 bounded HTTP (90 s, 64 MB); TLS 1.3 via rustls/aws-lc-rs against the OS
-trust store; HTML reports with a script-forbidding CSP. Dependencies are
+trust store; HTML reports with a script-forbidding CSP. Every parser and
+the plan/report path are fuzzed on each change. Dependencies are
 gated by `cargo deny` and `cargo vet`; CodeQL and OpenSSF Scorecard run on
 the repository; Actions are SHA-pinned with read-only default tokens;
 releases are built from signed tags with build-provenance attestations.
