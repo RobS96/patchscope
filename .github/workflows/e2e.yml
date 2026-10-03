@@ -95,7 +95,7 @@ jobs:
 
       - name: Scan finds and explains it
         run: |
-          set -uo pipefail
+          set +e -uo pipefail  # exit codes are checked explicitly below
           patchscope scan --manager npm-global --save scan.json --format json -o scan-out.json
           rc=$?
           # 2 = findings at or above the --fail-on threshold; expected here.
@@ -123,7 +123,7 @@ jobs:
 
       - name: Rescan shows it resolved
         run: |
-          set -uo pipefail
+          set +e -uo pipefail  # exit codes are checked explicitly below
           patchscope scan --manager npm-global --format json -o after.json
           [ $? -le 2 ] || exit 1
           set -e
@@ -143,7 +143,7 @@ jobs:
         # not fatal. (The UI itself is tested on Windows by cargo test.)
         continue-on-error: ${{ runner.os == 'Windows' }}
         run: |
-          set -uo pipefail
+          set +e -uo pipefail  # exit codes are checked explicitly below
           case "$RUNNER_OS" in
             Linux)
               xvfb-run -a timeout 20 target/release/patchscope-gui
@@ -239,7 +239,7 @@ jobs:
         env:
           MANAGER: ${{ matrix.manager }}
         run: |
-          set -uo pipefail
+          set +e -uo pipefail  # exit codes are checked explicitly below
           chmod +x patchscope && mv patchscope /usr/local/bin/
           # A fresh image can have hundreds of updates; lift the default cap.
           printf '[apply]\nmax_actions = 100000\n' > policy.toml
