@@ -4,6 +4,7 @@
 [![End-to-end](https://github.com/RobS96/patchscope/actions/workflows/e2e.yml/badge.svg)](https://github.com/RobS96/patchscope/actions/workflows/e2e.yml)
 [![CodeQL](https://github.com/RobS96/patchscope/actions/workflows/github-code-scanning/codeql/badge.svg)](https://github.com/RobS96/patchscope/security/code-scanning)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/RobS96/patchscope/badge)](https://scorecard.dev/viewer/?uri=github.com/RobS96/patchscope)
+[![OpenSSF Best Practices](https://www.bestpractices.dev/projects/15219/badge)](https://www.bestpractices.dev/projects/15219)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 **Find out what a computer runs, what about it is vulnerable or out of
@@ -48,6 +49,11 @@ gh attestation verify patchscope-v0.1.0-linux-x86_64.tar.gz \
   --repo RobS96/patchscope --signer-workflow RobS96/patchscope/.github/workflows/ci.yml
 sha256sum -c SHA256SUMS-linux-x86_64.txt
 ```
+
+Releases after v0.1.0 also attach that attestation as
+`patchscope-<version>-provenance.sigstore.json`. Add
+`--bundle patchscope-<version>-provenance.sigstore.json` to the command above
+to check against the attached copy instead of fetching it from GitHub.
 </details>
 
 ### 2. Run the app

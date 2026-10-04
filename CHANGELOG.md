@@ -15,6 +15,14 @@ uses [Semantic Versioning](https://semver.org/).
   the release pipeline, behind an approval-gated environment
   (docs/code-signing.md), switched on with one command:
   `scripts/enable-macos-signing.sh <DeveloperID.p12> <AuthKey.p8>`.
+- Each release attaches its build provenance attestation as a Sigstore
+  bundle (`patchscope-<version>-provenance.sigstore.json`), for
+  `gh attestation verify --bundle`.
+
+### Changed
+
+- The end-to-end tests' deliberately vulnerable npm package is checked
+  against a pinned integrity hash before it is planted.
 
 ## [0.1.0] - 2026-10-03
 
