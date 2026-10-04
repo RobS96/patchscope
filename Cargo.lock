@@ -2509,7 +2509,7 @@ dependencies = [
 
 [[package]]
 name = "patchscope-cli"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "clap",
  "patchscope-core",
@@ -2519,7 +2519,7 @@ dependencies = [
 
 [[package]]
 name = "patchscope-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "cvss",
  "directories",
@@ -2536,7 +2536,7 @@ dependencies = [
 
 [[package]]
 name = "patchscope-gui"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "directories",
  "eframe",
