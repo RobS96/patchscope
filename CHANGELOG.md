@@ -6,6 +6,8 @@ uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-10-04
+
 ### Added
 
 - Fuzzing: four cargo-fuzz targets (package-manager output, research and
@@ -106,5 +108,6 @@ uses [Semantic Versioning](https://semver.org/).
   CodeQL, OpenSSF Scorecard, dependency review, SBOMs, packaging smoke
   tests, attested releases from signed tags.
 
-[Unreleased]: https://github.com/RobS96/patchscope/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/RobS96/patchscope/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/RobS96/patchscope/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/RobS96/patchscope/releases/tag/v0.1.0

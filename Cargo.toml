@@ -3,7 +3,7 @@ resolver = "2"
 members = ["patchscope-core", "patchscope-cli", "patchscope-gui"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 # sysinfo 0.39 and eframe/egui 0.36 declare 1.95.
 rust-version = "1.95"
