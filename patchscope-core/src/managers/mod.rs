@@ -321,6 +321,7 @@ pub(crate) fn test_ctx(family: OsFamily, distro: Option<(&str, &str)>) -> Contex
 mod tests {
     use super::*;
     use crate::exec::{CommandOutput, FakeRunner};
+    use crate::model::UpdateKind;
 
     #[test]
     fn identifiers_are_checked_per_manager() {
@@ -434,6 +435,44 @@ mod tests {
         for bad in ["a@b", "a:b", "a+b"] {
             assert!(!valid_identifier(Rustup, bad), "rustup {bad}");
         }
+    }
+
+    #[test]
+    fn elevated_commands_name_their_program_by_absolute_path() {
+        // sudo (macOS has no secure_path), pkexec and `env` look a bare name
+        // up on the caller's PATH, where a user-writable directory such as
+        // /usr/local/bin can come first: that would run user code as root.
+        // Windows has no wrapper (the whole process is elevated).
+        let mut checked = 0;
+        for m in all() {
+            if !(m.supported_on(OsFamily::Macos) || m.supported_on(OsFamily::Linux)) {
+                continue;
+            }
+            let mut specs: Vec<CommandSpec> = m.refresh_command().into_iter().collect();
+            for kind in [UpdateKind::Package, UpdateKind::OsUpdate, UpdateKind::OsUpgrade] {
+                specs.push(m.install_command(&AvailableUpdate {
+                    manager: m.id(),
+                    id: "pkg".into(),
+                    name: "pkg".into(),
+                    installed_version: Some("1".into()),
+                    available_version: "2".into(),
+                    kind,
+                    security: false,
+                    restart_required: false,
+                    notes: None,
+                }));
+            }
+            for s in specs.iter().filter(|s| s.needs_elevation) {
+                assert!(
+                    s.program.starts_with('/'),
+                    "{}: elevated command `{}` must name its program by absolute path",
+                    m.id(),
+                    s.display()
+                );
+                checked += 1;
+            }
+        }
+        assert!(checked >= 8, "only {checked} elevated commands found");
     }
 
     #[test]

@@ -566,6 +566,8 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                     }
                 }
                 ApplyEvent::Verifying(m) => ui.progress(&format!("Verifying {}…", m.display_name())),
+                // Shown even with --quiet.
+                ApplyEvent::Warning(w) => eprintln!("warning: {w}"),
                 _ => {}
             })
             .map_err(|e| e.to_string())?;

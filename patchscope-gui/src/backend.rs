@@ -77,6 +77,7 @@ impl Backend for RealBackend {
                 progress(&format!("    → {} ({})", result.status.label(), result.message))
             }
             ApplyEvent::Verifying(m) => progress(&format!("Verifying {}…", m.display_name())),
+            ApplyEvent::Warning(w) => progress(&format!("Warning: {w}")),
         })
         .map_err(|e| e.to_string())
     }

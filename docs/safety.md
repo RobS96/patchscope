@@ -74,8 +74,16 @@ the machine.
 ## Privileges
 
 patchscope never stores or handles passwords. When a command needs root it
-is wrapped with the method you choose; `sudo` and `pkexec` are run by
-absolute path (`/usr/bin/…`), never looked up on `PATH`:
+is wrapped with the method you choose. Neither the wrapper nor the program
+it runs is looked up on `PATH`: `sudo`, `pkexec` and `osascript` are run by
+absolute path, and so is every program that runs as root
+(`/usr/sbin/softwareupdate`, `/usr/bin/apt-get`, `/usr/bin/dnf`,
+`/usr/bin/pacman`, `/usr/bin/snap`, the paths every mainstream system
+installs them at). This matters because macOS's `sudo` has no
+`secure_path` and `pkexec` resolves a bare name on the caller's `PATH`,
+where a user-writable directory such as Homebrew's `/usr/local/bin` can come
+first. A privileged command whose program is not an absolute path is
+refused, not run. The methods:
 
 | Method | Where | How |
 |---|---|---|
@@ -87,14 +95,20 @@ absolute path (`/usr/bin/…`), never looked up on `PATH`:
 
 Windows has no per-command elevation: run patchscope elevated to install
 Windows Update and Chocolatey updates. Unelevated, those are *skipped*
-(reported, not failed silently) and winget updates still install.
+(reported, not failed silently) and winget updates still install. Whether
+the process is elevated is read from its token (`whoami /groups`, run from
+`System32`: High or System integrity level), so it does not depend on the
+Server service that `net session` needs.
 
 ## The policy guardrails
 
 See [the policy file](user-guide.md#policy). The defaults protect Xcode and
 its Command Line Tools (your own list adds to them) and exclude major OS
 upgrades. A policy file with an unknown key or bad
-value is rejected, never partially applied.
+value is rejected, never partially applied: the CLI stops, and the app
+shows the error on the Updates tab and in the confirmation dialog, ticks
+nothing and turns Install off (dry runs still work) until a valid policy is
+saved.
 
 ## Verification, audit, locking
 
@@ -104,10 +118,16 @@ value is rejected, never partially applied.
 - **Audit log:** every action, including dry runs, is appended as one
   JSON line (time, command, status, exit code, duration, message) to
   `audit.jsonl` in the local data directory. On macOS/Linux the file is
-  created with mode `0600`.
-- **Lock:** `apply.lock` stops two applies from overlapping. It is removed
-  when the run ends, however it ends; one older than six hours counts as
-  stale.
+  created with mode `0600`, and an existing file is set back to `0600`. If
+  the log cannot be opened for appending (for example because an earlier
+  run under `sudo` left it owned by root), `apply` refuses to start and
+  installs nothing; a dry run carries on with a warning. A write that fails
+  during a run is shown as a warning and listed in the result.
+- **Lock:** `apply.lock` stops two applies from overlapping. The run holds
+  an operating-system lock on the file from start to finish; the system
+  releases it when patchscope exits, however it exits (including Ctrl-C at
+  a `sudo` prompt or a crash), so a leftover file never blocks a later run
+  and a long run is never treated as stale. The file itself stays in place.
 
 ## Time limits
 

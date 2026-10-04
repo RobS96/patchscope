@@ -94,6 +94,10 @@ pub struct ApplyReport {
     pub finished_at: String,
     pub dry_run: bool,
     pub results: Vec<ActionResult>,
+    /// Problems that did not stop the run, such as an audit log that could
+    /// not be written.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
 }
 
 impl ApplyReport {
@@ -121,13 +125,14 @@ pub enum ApplyEvent<'a> {
         result: &'a ActionResult,
     },
     Verifying(ManagerId),
+    /// Something the person should know that does not stop the run (also
+    /// kept in [`ApplyReport::warnings`]).
+    Warning(&'a str),
 }
 
 #[derive(Debug, thiserror::Error)]
 pub enum ApplyError {
-    #[error(
-        "another patchscope apply is running (lock file {0}); wait for it to finish, or delete the file if it is stale"
-    )]
+    #[error("another patchscope apply is running (lock file {0}); wait for it to finish")]
     Locked(String),
     #[error("lock file {path}: {source}")]
     Lock {
@@ -135,64 +140,62 @@ pub enum ApplyError {
         #[source]
         source: std::io::Error,
     },
+    #[error(
+        "audit log {path}: {source}; nothing was installed, because every install must be recorded (if an earlier run with sudo left the file or its folder owned by root, give it back to your user)"
+    )]
+    Audit {
+        path: String,
+        #[source]
+        source: std::io::Error,
+    },
 }
 
-/// Removes the lock file when the apply ends, however it ends.
-struct LockGuard(Option<PathBuf>);
-
-impl Drop for LockGuard {
-    fn drop(&mut self) {
-        if let Some(p) = &self.0 {
-            let _ = std::fs::remove_file(p);
-        }
-    }
+/// Holds the operating system's lock on `apply.lock` for as long as the
+/// apply runs. The OS releases it when the file is closed, which also
+/// happens when patchscope is killed without unwinding (Ctrl-C at a sudo
+/// prompt), so a leftover file never blocks. The file itself stays: removing
+/// it would let a later run lock a new file while an older one still holds
+/// the old one.
+struct LockGuard {
+    _file: Option<std::fs::File>,
 }
-
-const STALE_LOCK_SECS: u64 = 6 * 3600;
 
 fn take_lock(dir: Option<&Path>) -> Result<LockGuard, ApplyError> {
-    let Some(dir) = dir else { return Ok(LockGuard(None)) };
+    let Some(dir) = dir else {
+        return Ok(LockGuard { _file: None });
+    };
     std::fs::create_dir_all(dir).map_err(|source| ApplyError::Lock {
         path: dir.display().to_string(),
         source,
     })?;
     let path = dir.join("apply.lock");
-    for attempt in 0..2 {
-        match std::fs::OpenOptions::new().write(true).create_new(true).open(&path) {
-            Ok(mut f) => {
-                let _ = writeln!(f, "pid={} started={}", std::process::id(), util::now_rfc3339());
-                return Ok(LockGuard(Some(path)));
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && attempt == 0 => {
-                let stale = std::fs::metadata(&path)
-                    .and_then(|m| m.modified())
-                    .ok()
-                    .and_then(|m| m.elapsed().ok())
-                    .is_some_and(|age| age.as_secs() > STALE_LOCK_SECS);
-                if stale {
-                    let _ = std::fs::remove_file(&path);
-                    continue;
-                }
-                return Err(ApplyError::Locked(path.display().to_string()));
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-                return Err(ApplyError::Locked(path.display().to_string()));
-            }
-            Err(source) => {
-                return Err(ApplyError::Lock {
-                    path: path.display().to_string(),
-                    source,
-                });
-            }
-        }
+    let lock_err = |source| ApplyError::Lock {
+        path: path.display().to_string(),
+        source,
+    };
+    let mut f = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&path)
+        .map_err(lock_err)?;
+    match f.try_lock() {
+        Ok(()) => {}
+        Err(std::fs::TryLockError::WouldBlock) => return Err(ApplyError::Locked(path.display().to_string())),
+        Err(std::fs::TryLockError::Error(e)) => return Err(lock_err(e)),
     }
-    Err(ApplyError::Locked(path.display().to_string()))
+    // For a person looking at the file; the lock is what counts.
+    let _ = f.set_len(0);
+    let _ = writeln!(f, "pid={} started={}", std::process::id(), util::now_rfc3339());
+    Ok(LockGuard { _file: Some(f) })
 }
 
-fn audit(path: Option<&Path>, dry_run: bool, r: &ActionResult) {
-    let Some(path) = path else { return };
+/// Open the audit log for appending; owner-only on Unix, including a file
+/// that already existed with wider permissions.
+fn open_audit_log(path: &Path) -> std::io::Result<std::fs::File> {
     if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
+        std::fs::create_dir_all(parent)?;
     }
     let mut opts = std::fs::OpenOptions::new();
     opts.create(true).append(true);
@@ -201,7 +204,27 @@ fn audit(path: Option<&Path>, dry_run: bool, r: &ActionResult) {
         use std::os::unix::fs::OpenOptionsExt;
         opts.mode(0o600);
     }
-    if let Ok(mut f) = opts.open(path) {
+    let f = opts.open(path)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if f.metadata()?.permissions().mode() & 0o777 != 0o600 {
+            f.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+        }
+    }
+    Ok(f)
+}
+
+/// The open audit log. The first write that fails becomes a warning and
+/// nothing more is written.
+struct AuditLog {
+    path: PathBuf,
+    file: Option<std::fs::File>,
+}
+
+impl AuditLog {
+    fn record(&mut self, dry_run: bool, r: &ActionResult) -> Option<String> {
+        let f = self.file.as_mut()?;
         let line = serde_json::json!({
             "ts": util::now_rfc3339(),
             "dry_run": dry_run,
@@ -212,7 +235,36 @@ fn audit(path: Option<&Path>, dry_run: bool, r: &ActionResult) {
             "duration_ms": r.duration_ms,
             "message": r.message,
         });
-        let _ = writeln!(f, "{line}");
+        // One write per line, so concurrent appends cannot interleave.
+        match f.write_all(format!("{line}\n").as_bytes()) {
+            Ok(()) => None,
+            Err(e) => {
+                self.file = None;
+                Some(format!(
+                    "audit log {}: could not write: {e}; this and later actions are not recorded there",
+                    self.path.display()
+                ))
+            }
+        }
+    }
+}
+
+/// Where warnings go: shown as they happen, and kept for the report.
+struct Warnings<'a> {
+    list: Vec<String>,
+    on_event: &'a dyn Fn(ApplyEvent),
+}
+
+impl Warnings<'_> {
+    fn add(&mut self, w: String) {
+        (self.on_event)(ApplyEvent::Warning(&w));
+        self.list.push(w);
+    }
+
+    fn audit(&mut self, log: &mut Option<AuditLog>, dry_run: bool, r: &ActionResult) {
+        if let Some(w) = log.as_mut().and_then(|l| l.record(dry_run, r)) {
+            self.add(w);
+        }
     }
 }
 
@@ -224,9 +276,33 @@ pub fn apply_plan(
     on_event: &dyn Fn(ApplyEvent),
 ) -> Result<ApplyReport, ApplyError> {
     let _lock = if opts.dry_run {
-        LockGuard(None)
+        LockGuard { _file: None }
     } else {
         take_lock(opts.lock_dir.as_deref())?
+    };
+    let mut warnings = Warnings {
+        list: Vec::new(),
+        on_event,
+    };
+    // An install that cannot be recorded does not start; a dry run says so.
+    let mut audit_log = match opts.audit_log.as_deref() {
+        None => None,
+        Some(p) => match open_audit_log(p) {
+            Ok(f) => Some(AuditLog {
+                path: p.to_path_buf(),
+                file: Some(f),
+            }),
+            Err(source) if !opts.dry_run => {
+                return Err(ApplyError::Audit {
+                    path: p.display().to_string(),
+                    source,
+                });
+            }
+            Err(e) => {
+                warnings.add(format!("audit log {}: {e}; this dry run is not recorded", p.display()));
+                None
+            }
+        },
     };
     let started_at = util::now_rfc3339();
     let total = plan.actions.len();
@@ -242,7 +318,11 @@ pub fn apply_plan(
     let mut stop = false;
     for (index, action) in plan.actions.iter().enumerate() {
         let mgr = managers::get(action.manager);
-        let spec = elevate(&mgr.install_command(&action.updates[0]), elevation);
+        let base = mgr.install_command(&action.updates[0]);
+        let (spec, refused) = match elevate(&base, elevation) {
+            Ok(s) => (s, None),
+            Err(e) => (base, Some(e.to_string())),
+        };
         let command = spec.display();
         on_event(ApplyEvent::Started {
             index,
@@ -261,7 +341,10 @@ pub fn apply_plan(
             output_tail: String::new(),
         };
         if opts.dry_run {
-            r.message = "not run (dry run)".into();
+            r.message = match &refused {
+                Some(e) => format!("not run (dry run); {e}"),
+                None => "not run (dry run)".into(),
+            };
         } else if stop {
             r.status = ActionStatus::Skipped;
             r.message = "not run: an earlier action failed or is still running".into();
@@ -272,6 +355,9 @@ pub fn apply_plan(
             } else {
                 "needs root: re-run with sudo, or allow an elevation method".into()
             };
+        } else if let Some(e) = refused {
+            r.status = ActionStatus::Failed;
+            r.message = e;
         } else {
             let t = Instant::now();
             match runner.run(&spec) {
@@ -316,7 +402,7 @@ pub fn apply_plan(
                 stop = true;
             }
         }
-        audit(opts.audit_log.as_deref(), opts.dry_run, &r);
+        warnings.audit(&mut audit_log, opts.dry_run, &r);
         on_event(ApplyEvent::Finished {
             index,
             total,
@@ -326,7 +412,15 @@ pub fn apply_plan(
     }
 
     if opts.verify && !opts.dry_run {
-        verify(plan, &mut results, runner, &ctx, on_event, opts);
+        verify(
+            plan,
+            &mut results,
+            runner,
+            &ctx,
+            on_event,
+            &mut audit_log,
+            &mut warnings,
+        );
     }
 
     Ok(ApplyReport {
@@ -334,6 +428,7 @@ pub fn apply_plan(
         finished_at: util::now_rfc3339(),
         dry_run: opts.dry_run,
         results,
+        warnings: warnings.list,
     })
 }
 
@@ -345,7 +440,8 @@ fn verify(
     runner: &dyn CommandRunner,
     ctx: &Context,
     on_event: &dyn Fn(ApplyEvent),
-    opts: &ApplyOptions,
+    audit_log: &mut Option<AuditLog>,
+    warnings: &mut Warnings,
 ) {
     let touched: BTreeSet<ManagerId> = plan
         .actions
@@ -399,7 +495,7 @@ fn verify(
                 )
             }
         }
-        audit(opts.audit_log.as_deref(), false, r);
+        warnings.audit(audit_log, false, r);
     }
 }
 
@@ -422,7 +518,13 @@ pub fn refresh_metadata(
             continue;
         };
         progress(&format!("Refreshing {}…", inv.id.display_name()));
-        let spec = elevate(&spec, elevation);
+        let spec = match elevate(&spec, elevation) {
+            Ok(s) => s,
+            Err(e) => {
+                out.push((inv.id, Err(e.to_string())));
+                continue;
+            }
+        };
         let res = match runner.run(&spec) {
             Ok(o) if o.success() => Ok(()),
             Ok(o) => Err(o.tail(300)),
@@ -536,4 +638,52 @@ pub fn plan_from_saved(
     let mut plan = build_plan(&report, &scan.analysis, policy, selection);
     plan.excluded.extend(refused);
     Ok((report, plan))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_held_lock_refuses_a_second_apply_until_released() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = take_lock(Some(dir.path())).unwrap();
+        let err = take_lock(Some(dir.path())).err().expect("second apply refused");
+        assert!(err.to_string().contains("another patchscope apply"), "{err}");
+        drop(first);
+        // Other tests spawn processes on other threads; a child forked in
+        // that instant shares the descriptor until it execs (where
+        // close-on-exec drops it), so allow the release a moment.
+        let deadline = Instant::now() + std::time::Duration::from_secs(5);
+        while take_lock(Some(dir.path())).is_err() {
+            assert!(Instant::now() < deadline, "free again once the first apply ends");
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+
+    #[test]
+    fn a_leftover_lock_file_with_no_holder_does_not_block() {
+        // What a run killed without unwinding (Ctrl-C at a sudo prompt) leaves.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("apply.lock"), "pid=1 started=2026-10-04T00:00:00Z\n").unwrap();
+        take_lock(Some(dir.path())).expect("an unheld lock file is not a running apply");
+    }
+
+    #[test]
+    fn a_long_apply_keeps_its_lock() {
+        let dir = tempfile::tempdir().unwrap();
+        let _first = take_lock(Some(dir.path())).unwrap();
+        // Seven hours in: an age heuristic would call this lock stale.
+        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(7 * 3600);
+        std::fs::File::options()
+            .write(true)
+            .open(dir.path().join("apply.lock"))
+            .unwrap()
+            .set_modified(old)
+            .unwrap();
+        assert!(
+            take_lock(Some(dir.path())).is_err(),
+            "a running apply's lock must not be taken over, however old"
+        );
+    }
 }

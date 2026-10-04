@@ -27,6 +27,13 @@ uses [Semantic Versioning](https://semver.org/).
 ### Fixed
 
 - APT packages of a foreign architecture get their own key (`name:arch`).
+- The run lock is an operating-system file lock: an interrupted apply no
+  longer blocks the next one for six hours, and a long apply's lock cannot
+  be taken over.
+- An apply refuses to start if it cannot write its audit log, an existing
+  log is made owner-only, and write failures are reported.
+- Windows: elevation is read from the process token (`whoami /groups`)
+  instead of `net session`, which fails when the Server service is off.
 
 ### Security
 
@@ -42,6 +49,10 @@ uses [Semantic Versioning](https://semver.org/).
   and `apt-get` runs with `--no-remove`.
 - pacman's full-system upgrade is planned only when every pending pacman
   package is selected and allowed by the policy.
+- Elevated commands name their program by absolute path, so sudo, pkexec
+  and the macOS administrator prompt no longer find it through `PATH`.
+- The desktop app blocks installing while the policy file has an error
+  (dry runs still work) instead of falling back to the default policy.
 
 ## [0.1.0] - 2026-10-03
 
