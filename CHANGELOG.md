@@ -64,6 +64,11 @@ uses [Semantic Versioning](https://semver.org/).
   and the macOS administrator prompt no longer find it through `PATH`.
 - The desktop app blocks installing while the policy file has an error
   (dry runs still work) instead of falling back to the default policy.
+- Text patchscope did not write (package names, advisory text, saved-scan
+  fields, tool output) is shown with control, invisible and bidirectional
+  characters escaped, in the terminal and in Markdown and HTML reports, so
+  it cannot hide or reorder what is shown before confirmation. Markdown
+  reports also escape links, images, HTML and code spans.
 
 ## [0.1.0] - 2026-10-03
 

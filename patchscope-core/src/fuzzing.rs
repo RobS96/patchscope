@@ -8,7 +8,9 @@
 //!
 //! - nothing planned carries an identifier its manager would not list, or
 //!   a version that is not a plain version where it reaches a command;
-//! - an HTML report never contains a raw `<script`.
+//! - an HTML report never contains a raw `<script`;
+//! - text shown to a person (terminal, reports) carries no control or
+//!   hidden/bidi character other than tab and newline.
 
 use crate::analysis::{AnalyzeOptions, analyze};
 use crate::discover::{hardware, os};
@@ -196,7 +198,14 @@ pub fn pipeline(data: &[u8]) {
     }
     let html = report::html(&report, Some(&analysis), Some(&plan));
     assert!(!html.contains("<script"), "unescaped script in the HTML report");
-    let _ = report::markdown(&report, Some(&analysis), Some(&plan));
+    let md = report::markdown(&report, Some(&analysis), Some(&plan));
+    for (name, out) in [("HTML", &html), ("Markdown", &md)] {
+        assert!(
+            out.chars()
+                .all(|c| c == '\n' || c == '\t' || !util::is_hidden_or_control(c)),
+            "control or hidden character in the {name} report"
+        );
+    }
 }
 
 /// Policy files and the small text utilities.
@@ -222,6 +231,16 @@ pub fn policy_and_text(data: &[u8]) {
     let _ = util::glob_match(a, b);
     let _ = util::first_version(&t);
     let _ = util::parse_date(&t);
+    assert!(
+        util::display_safe(&t)
+            .chars()
+            .all(|c| c == '\t' || !util::is_hidden_or_control(c))
+    );
+    assert!(
+        util::display_safe_multiline(&t)
+            .chars()
+            .all(|c| c == '\t' || c == '\n' || !util::is_hidden_or_control(c))
+    );
     for m in ManagerId::ALL {
         let _ = managers::valid_identifier(m, a);
     }
@@ -250,6 +269,7 @@ mod tests {
             "[apply]\nprotected=[\"*\"]\nmax_actions=0",
             "CVE-2024-",
             "\u{feff}\r\n\r\n",
+            "Name Id Version Available\n----\nEvil\u{1b}[1A\u{1b}[2K\u{202e}`x`[a](b) Evil.App 1 2\n",
         ]
         .iter()
         .map(|s| s.as_bytes().to_vec())

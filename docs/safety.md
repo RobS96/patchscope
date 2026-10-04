@@ -70,6 +70,15 @@ the machine.
   then escapes it for AppleScript (tested with quotes and backslashes).
 - HTML reports escape all text, link only `http(s)` URLs, carry a
   `Content-Security-Policy` that forbids scripts, and load nothing external.
+- Text patchscope did not write (package names and versions, tool output,
+  advisory summaries, anything read from a scan file) cannot drive the
+  terminal or rearrange what you read: control characters (escape
+  sequences, carriage returns) and invisible or bidirectional formatting
+  characters (right-to-left overrides, zero-width characters) are shown as
+  `\u{..}` escapes in the CLI and in both reports, and a command containing
+  any is flagged where it is shown. Markdown reports also escape every
+  character that could form a link, image, HTML tag or emphasis, and fence
+  each command so it cannot leave its code span.
 
 ## Privileges
 

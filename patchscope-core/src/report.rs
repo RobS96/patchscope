@@ -4,11 +4,46 @@
 use crate::apply::ApplyReport;
 use crate::model::*;
 use crate::plan::UpdatePlan;
-use crate::util::human_bytes;
+use crate::util::{display_safe, display_safe_multiline, human_bytes};
 use std::fmt::Write;
 
+/// One line of untrusted text with its line breaks as spaces and its hidden
+/// and control characters shown as escapes.
+fn md_line(s: &str) -> String {
+    display_safe(&s.replace("\r\n", " ").replace(['\r', '\n'], " "))
+}
+
+/// Text for a Markdown paragraph or table cell: every character Markdown
+/// could read as a link, image, HTML, emphasis, code or a cell boundary is
+/// backslash-escaped.
 fn md_escape(s: &str) -> String {
-    s.replace('|', "\\|").replace('\n', " ")
+    let mut o = String::with_capacity(s.len());
+    for c in md_line(s).chars() {
+        if "\\`*_[]<>|".contains(c) {
+            o.push('\\');
+        }
+        o.push(c);
+    }
+    o
+}
+
+/// A code span in a table cell. Backslashes do not escape inside one, so the
+/// fence is one backtick longer than the longest run in the text, padded
+/// with a space where the text starts or ends with a backtick or space
+/// (CommonMark); `|` is escaped because GFM splits cells before code spans.
+fn md_code_cell(s: &str) -> String {
+    let s = md_line(s).replace('|', "\\|");
+    if s.is_empty() {
+        return String::new();
+    }
+    let longest = s.split(|c| c != '`').map(str::len).max().unwrap_or(0);
+    let fence = "`".repeat(longest + 1);
+    let pad = if s.starts_with(['`', ' ']) || s.ends_with(['`', ' ']) {
+        " "
+    } else {
+        ""
+    };
+    format!("{fence}{pad}{s}{pad}{fence}")
 }
 
 pub fn markdown(report: &SystemReport, analysis: Option<&Analysis>, plan: Option<&UpdatePlan>) -> String {
@@ -18,7 +53,8 @@ pub fn markdown(report: &SystemReport, analysis: Option<&Analysis>, plan: Option
     let _ = writeln!(
         o,
         "Generated {} by patchscope {}.\n",
-        report.generated_at, report.tool_version
+        md_escape(&report.generated_at),
+        md_escape(&report.tool_version)
     );
     let _ = writeln!(o, "## System\n");
     let _ = writeln!(o, "| | |\n|---|---|");
@@ -27,7 +63,7 @@ pub fn markdown(report: &SystemReport, analysis: Option<&Analysis>, plan: Option
         let _ = writeln!(o, "| Build | {} |", md_escape(b));
     }
     let _ = writeln!(o, "| Kernel | {} |", md_escape(&report.os.kernel));
-    let _ = writeln!(o, "| Architecture | {} |", report.os.arch);
+    let _ = writeln!(o, "| Architecture | {} |", md_escape(&report.os.arch));
     if let Some(m) = &hw.model {
         let _ = writeln!(o, "| Model | {} |", md_escape(m));
     }
@@ -58,7 +94,7 @@ pub fn markdown(report: &SystemReport, analysis: Option<&Analysis>, plan: Option
         let _ = writeln!(
             o,
             "| Battery | {} {} {} |",
-            b.condition.clone().unwrap_or_default(),
+            md_escape(b.condition.as_deref().unwrap_or_default()),
             b.max_capacity_percent
                 .map(|p| format!("{p}% capacity"))
                 .unwrap_or_default(),
@@ -66,7 +102,7 @@ pub fn markdown(report: &SystemReport, analysis: Option<&Analysis>, plan: Option
         );
     }
     for r in &report.runtimes {
-        let _ = writeln!(o, "| {} | {} |", r.display_name, r.version);
+        let _ = writeln!(o, "| {} | {} |", md_escape(&r.display_name), md_escape(&r.version));
     }
 
     let _ = writeln!(o, "\n## Package sources\n");
@@ -131,7 +167,7 @@ pub fn markdown(report: &SystemReport, analysis: Option<&Analysis>, plan: Option
                 o,
                 "- {} {}: {}",
                 if src.ok { "✓" } else { "✗" },
-                src.name,
+                md_escape(&src.name),
                 md_escape(&src.detail)
             );
         }
@@ -146,11 +182,11 @@ pub fn markdown(report: &SystemReport, analysis: Option<&Analysis>, plan: Option
             for (i, a) in p.actions.iter().enumerate() {
                 let _ = writeln!(
                     o,
-                    "| {} | {} | {} | `{}` |",
+                    "| {} | {} | {} | {} |",
                     i + 1,
                     md_escape(&a.title),
                     a.severity,
-                    md_escape(&a.command)
+                    md_code_cell(&a.command)
                 );
             }
         }
@@ -173,7 +209,12 @@ pub fn markdown(report: &SystemReport, analysis: Option<&Analysis>, plan: Option
 pub fn apply_markdown(r: &ApplyReport) -> String {
     let mut o = String::new();
     let _ = writeln!(o, "# patchscope apply {}\n", if r.dry_run { "(dry run)" } else { "" });
-    let _ = writeln!(o, "Started {}, finished {}.\n", r.started_at, r.finished_at);
+    let _ = writeln!(
+        o,
+        "Started {}, finished {}.\n",
+        md_escape(&r.started_at),
+        md_escape(&r.finished_at)
+    );
     let _ = writeln!(o, "| Update | Status | Detail |\n|---|---|---|");
     for x in &r.results {
         let _ = writeln!(
@@ -190,8 +231,11 @@ pub fn apply_markdown(r: &ApplyReport) -> String {
     o
 }
 
+/// HTML text, with hidden and control characters (which a browser would
+/// apply, e.g. a right-to-left override) shown as escapes.
 fn h(s: &str) -> String {
-    s.replace('&', "&amp;")
+    display_safe_multiline(s)
+        .replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
         .replace('"', "&quot;")
@@ -426,5 +470,147 @@ mod tests {
         assert!(!link("javascript:alert(1)").contains("<a"));
         assert!(link("https://osv.dev/x").contains("href=\"https://osv.dev/x\""));
         assert_eq!(md_escape("a|b\nc"), "a\\|b c");
+    }
+
+    /// Link, image beacon, raw HTML, emphasis, a code-span break-out, a
+    /// carriage return and a right-to-left override.
+    const CRAFTED: &str = "`x` [a](https://e.test/l) ![b](https://e.test/i.png) <img src=x> **y**\r\u{202e}z";
+
+    fn crafted() -> (SystemReport, Analysis, UpdatePlan) {
+        let report = SystemReport {
+            schema_version: SCHEMA_VERSION,
+            tool_version: CRAFTED.into(),
+            generated_at: CRAFTED.into(),
+            host: HostInfo::default(),
+            os: OsInfo {
+                family: OsFamily::Macos,
+                name: CRAFTED.into(),
+                version: "26".into(),
+                build: Some(CRAFTED.into()),
+                kernel: CRAFTED.into(),
+                arch: CRAFTED.into(),
+                distro_id: None,
+                distro_version_id: None,
+                edition: None,
+            },
+            hardware: HardwareInfo {
+                model: Some(CRAFTED.into()),
+                gpus: vec![CRAFTED.into()],
+                battery: Some(BatteryInfo {
+                    cycle_count: None,
+                    condition: Some(CRAFTED.into()),
+                    max_capacity_percent: None,
+                }),
+                ..Default::default()
+            },
+            runtimes: vec![Runtime {
+                product: "python".into(),
+                display_name: CRAFTED.into(),
+                version: CRAFTED.into(),
+                path_command: "python3".into(),
+            }],
+            managers: vec![],
+            warnings: vec![CRAFTED.into()],
+        };
+        let finding = Finding {
+            id: "x".into(),
+            severity: Severity::High,
+            category: Category::Vulnerability,
+            title: CRAFTED.into(),
+            manager: None,
+            subject: CRAFTED.into(),
+            installed_version: None,
+            rationale: CRAFTED.into(),
+            advisories: vec![],
+            remediation: None,
+            risk_score: 0.0,
+            references: vec![],
+        };
+        let analysis = Analysis {
+            schema_version: SCHEMA_VERSION,
+            generated_at: CRAFTED.into(),
+            offline: false,
+            sources: vec![SourceStatus {
+                name: CRAFTED.into(),
+                ok: true,
+                detail: CRAFTED.into(),
+            }],
+            summary: Summary::default(),
+            findings: vec![finding],
+        };
+        let action = |command: &str| crate::plan::PlannedAction {
+            key: "softwareupdate:x".into(),
+            manager: ManagerId::Softwareupdate,
+            title: CRAFTED.into(),
+            severity: Severity::High,
+            finding_ids: vec![],
+            updates: vec![],
+            command: command.into(),
+            needs_elevation: true,
+            restart_required: false,
+        };
+        let plan = UpdatePlan {
+            generated_at: "2026-10-04T00:00:00Z".into(),
+            actions: vec![
+                action("softwareupdate --install 'a`b ``c <img src=x>'"),
+                action("`starts with a backtick"),
+            ],
+            excluded: vec![crate::plan::Excluded {
+                key: "k".into(),
+                title: CRAFTED.into(),
+                reason: CRAFTED.into(),
+            }],
+        };
+        (report, analysis, plan)
+    }
+
+    /// `needle` occurs in `md` without a backslash escaping its first character.
+    fn unescaped(md: &str, needle: &str) -> bool {
+        md.match_indices(needle)
+            .any(|(i, _)| !md[..i].ends_with('\\') || md[..i].ends_with("\\\\"))
+    }
+
+    #[test]
+    fn markdown_text_cannot_inject_markup() {
+        let (r, a, mut p) = crafted();
+        // Commands are code spans, where `<img` is literal; tested below.
+        for x in &mut p.actions {
+            x.command = "plain".into();
+        }
+        let md = markdown(&r, Some(&a), Some(&p));
+        for needle in ["](", "<img", "**y", "`x`"] {
+            assert!(!unescaped(&md, needle), "unescaped {needle:?} in:\n{md}");
+        }
+        assert!(md.contains(r"\[a\](https://e.test/l)"), "{md}");
+        assert!(md.contains(r"!\[b\]"), "{md}");
+        assert!(md.contains(r"\<img src=x\>"), "{md}");
+        assert!(!md.contains('\r') && !md.contains('\u{202e}'), "{md:?}");
+        assert!(md.contains(r"\\u{202e}z"), "the override is shown, escaped: {md}");
+        // Every table row is still one line with its own cells.
+        for line in md.lines().filter(|l| l.starts_with("| ")) {
+            assert!(line.ends_with(" |"), "broken row: {line}");
+        }
+    }
+
+    #[test]
+    fn markdown_commands_stay_inside_their_code_span() {
+        let (r, a, p) = crafted();
+        let md = markdown(&r, Some(&a), Some(&p));
+        // The longest backtick run inside is two, so the fence is three.
+        assert!(
+            md.contains("| ```softwareupdate --install 'a`b ``c <img src=x>'``` |"),
+            "{md}"
+        );
+        // Content that starts with a backtick is padded with a space.
+        assert!(md.contains("| `` `starts with a backtick `` |"), "{md}");
+        assert_eq!(md_code_cell("a|b"), r"`a\|b`");
+    }
+
+    #[test]
+    fn html_cannot_be_reordered_by_bidi_controls() {
+        let (r, a, p) = crafted();
+        let html = html(&r, Some(&a), Some(&p));
+        assert!(!html.contains('\u{202e}') && !html.contains('\r'), "{html:?}");
+        assert!(!html.contains("<img"));
     }
 }

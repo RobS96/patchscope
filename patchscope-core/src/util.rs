@@ -134,6 +134,61 @@ pub fn glob_match(pattern: &str, text: &str) -> bool {
     pi == p.len()
 }
 
+/// Characters that must not reach a terminal or a rendered report as they
+/// are: C0/C1 controls and DEL (escape sequences, carriage returns), and the
+/// invisible format characters that hide text or reorder it on screen
+/// (bidi embeddings, overrides, isolates and marks, zero-width characters,
+/// tag characters). `\t` and `\n` count too; the display functions decide.
+pub fn is_hidden_or_control(c: char) -> bool {
+    c.is_control()
+        || matches!(
+            c,
+            '\u{AD}'                    // soft hyphen
+            | '\u{61C}'                 // Arabic letter mark
+            | '\u{180E}'                // Mongolian vowel separator
+            | '\u{200B}'..='\u{200F}'   // zero-width space, (non-)joiner, LRM, RLM
+            | '\u{2028}'..='\u{202E}'   // line/paragraph separators, embeddings, overrides
+            | '\u{2060}'..='\u{2064}'   // word joiner, invisible operators
+            | '\u{2066}'..='\u{206F}'   // isolates, deprecated format characters
+            | '\u{FEFF}'                // zero-width no-break space
+            | '\u{FFF9}'..='\u{FFFB}'   // interlinear annotation
+            | '\u{E0000}'..='\u{E007F}' // tag characters
+        )
+}
+
+/// Text that patchscope did not write (package-manager output, advisory
+/// text, fields of a saved scan), made safe to show on one line: every
+/// [`is_hidden_or_control`] character except `\t` is shown as a `\u{..}`
+/// escape, so the reader sees that something was there. When any is,
+/// backslashes are doubled as well, so an escape cannot be faked by typing
+/// one.
+pub fn display_safe(s: &str) -> String {
+    display(s, false)
+}
+
+/// [`display_safe`] for multi-line text: `\n` is kept.
+pub fn display_safe_multiline(s: &str) -> String {
+    display(s, true)
+}
+
+fn display(s: &str, keep_newlines: bool) -> String {
+    let hidden = |c: char| is_hidden_or_control(c) && c != '\t' && !(keep_newlines && c == '\n');
+    if !s.chars().any(hidden) {
+        return s.to_string();
+    }
+    let mut o = String::with_capacity(s.len() + 16);
+    for c in s.chars() {
+        if c == '\\' {
+            o.push_str("\\\\");
+        } else if hidden(c) {
+            o += &format!("\\u{{{:x}}}", c as u32);
+        } else {
+            o.push(c);
+        }
+    }
+    o
+}
+
 pub fn human_bytes(b: u64) -> String {
     const UNITS: [&str; 6] = ["B", "KB", "MB", "GB", "TB", "PB"];
     let mut v = b as f64;
@@ -198,6 +253,59 @@ mod tests {
         assert!(glob_match("*", ""));
         assert!(glob_match("a*b*c", "aXXbYYc"));
         assert!(!glob_match("a*b*c", "aXXbYY"));
+    }
+
+    #[test]
+    fn display_text_is_inert_and_shows_what_was_removed() {
+        // Plain text, tabs, non-Latin scripts and emoji are untouched.
+        for s in [
+            "brew upgrade --formula git",
+            "a\tb",
+            "C:\\Program Files",
+            "Ünïcødé 日本 🎉",
+            "",
+        ] {
+            assert_eq!(display_safe(s), s);
+        }
+        assert_eq!(
+            display_safe("a\x1b[2Kb\r\u{9b}c\x7f\0"),
+            r"a\u{1b}[2Kb\u{d}\u{9b}c\u{7f}\u{0}"
+        );
+        assert_eq!(display_safe("x\u{202e}gpj.exe"), r"x\u{202e}gpj.exe");
+        for c in [
+            '\u{61c}',
+            '\u{200b}',
+            '\u{200d}',
+            '\u{200e}',
+            '\u{200f}',
+            '\u{2028}',
+            '\u{202a}',
+            '\u{2066}',
+            '\u{2069}',
+            '\u{feff}',
+            '\u{e0041}',
+        ] {
+            let out = display_safe(&format!("a{c}b"));
+            assert_eq!(out, format!("a\\u{{{:x}}}b", c as u32));
+        }
+        // Newlines: escaped on one line, kept in multi-line text.
+        assert_eq!(display_safe("a\nb"), r"a\u{a}b");
+        assert_eq!(display_safe_multiline("a\nb\r\x1b"), "a\nb\\u{d}\\u{1b}");
+        // A typed escape cannot pass for a real one.
+        assert_eq!(display_safe(r"\u{1b}"), r"\u{1b}");
+        assert_eq!(display_safe("\\u{1b}\x1b"), r"\\u{1b}\u{1b}");
+        // Nothing hidden or controlling survives.
+        let all: String = (0u32..0x11_0000).filter_map(char::from_u32).collect();
+        assert!(
+            display_safe(&all)
+                .chars()
+                .all(|c| c == '\t' || !is_hidden_or_control(c))
+        );
+        assert!(
+            display_safe_multiline(&all)
+                .chars()
+                .all(|c| c == '\t' || c == '\n' || !is_hidden_or_control(c))
+        );
     }
 
     #[test]
