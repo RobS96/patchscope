@@ -252,18 +252,40 @@ pub fn valid_identifier(manager: ManagerId, id: &str) -> bool {
         id.chars()
             .all(|c| c.is_ascii_alphanumeric() || "._+-@:~".contains(c) || extra.contains(c))
     };
+    // Only these characters, besides ASCII letters and digits.
+    let only = |allowed: &str| id.chars().all(|c| c.is_ascii_alphanumeric() || allowed.contains(c));
     match manager {
-        ManagerId::Apt | ManagerId::Dnf | ManagerId::Pacman | ManagerId::Snap | ManagerId::Flatpak => name(""),
-        ManagerId::Chocolatey | ManagerId::Winget => name(""),
-        // Tap formulae are `user/tap/name`; never a path or URL.
+        ManagerId::Apt => linux::valid_debian_package(id),
+        // `@name` is a group or module and `name:stream` a module stream.
+        ManagerId::Dnf => only("._+-"),
+        // pacman's install command takes no name (`-Syu`).
+        ManagerId::Pacman => only("@._+-"),
+        ManagerId::Snap => only("-_") && !id.chars().any(|c| c.is_ascii_uppercase()),
+        ManagerId::Flatpak => only("._-"),
+        // `choco upgrade all` upgrades every package.
+        ManagerId::Chocolatey => only("._-") && !id.eq_ignore_ascii_case("all"),
+        // Only ever reaches winget as `--id ID --exact`.
+        ManagerId::Winget => name(""),
+        // Tap formulae are `user/tap/name`; never a path or URL. A saved
+        // scan's tap names are not trusted: `apply --from` keeps only
+        // updates that `brew outdated` lists now.
         ManagerId::Homebrew => name("/") && !id.starts_with('/') && !id.contains("..") && !id.contains("//"),
         ManagerId::Mas => id.chars().all(|c| c.is_ascii_digit()),
         ManagerId::WindowsUpdate => windows::is_guid(id),
         ManagerId::NpmGlobal => dev::valid_npm_name(id),
-        ManagerId::Rustup => name(""),
+        ManagerId::Rustup => dev::valid_toolchain(id),
         // Software Update labels are free text ("macOS Tahoe 26.7.2-25H210")
         // and only ever reach softwareupdate as one --install argument.
         ManagerId::Softwareupdate => true,
+    }
+}
+
+/// Whether `version` is safe on `manager`'s install command. Only npm puts
+/// the version there (`npm install --global name@version`).
+pub fn valid_version(manager: ManagerId, version: &str) -> bool {
+    match manager {
+        ManagerId::NpmGlobal => dev::valid_npm_version(version),
+        _ => true,
     }
 }
 
@@ -322,6 +344,96 @@ mod tests {
         assert!(valid_identifier(Softwareupdate, "macOS Tahoe 26.7.2-25H210"));
         assert!(!valid_identifier(Softwareupdate, "--all"));
         assert!(!valid_identifier(Snap, "a\nb"));
+    }
+
+    #[test]
+    fn identifiers_follow_each_managers_grammar() {
+        use ManagerId::*;
+        // apt-get reads a trailing `-` as "remove" and `~`/`?` as patterns.
+        for bad in [
+            "openssh-server-",
+            "~i",
+            "~nfoo",
+            "?installed",
+            "foo~bar",
+            "a@b",
+            "Curl",
+            "libc6:",
+            "x",
+        ] {
+            assert!(!valid_identifier(Apt, bad), "apt {bad}");
+        }
+        for ok in [
+            "curl",
+            "g++",
+            "libstdc++6",
+            "libc6:i386",
+            "linux-image-6.8.0-80-generic",
+            "tzdata",
+        ] {
+            assert!(valid_identifier(Apt, ok), "apt {ok}");
+        }
+        // dnf: `@name` is a group or module, `name:stream` a module stream.
+        for bad in ["@core", "@development-tools", "nodejs:18", "a~b"] {
+            assert!(!valid_identifier(Dnf, bad), "dnf {bad}");
+        }
+        for ok in ["curl", "gcc-c++", "openssl-libs", "python3.12", "NetworkManager"] {
+            assert!(valid_identifier(Dnf, ok), "dnf {ok}");
+        }
+        // `choco upgrade all` upgrades every package.
+        for bad in ["all", "ALL", "All", "a@b", "a:b", "a+b"] {
+            assert!(!valid_identifier(Chocolatey, bad), "choco {bad}");
+        }
+        for ok in [
+            "git",
+            "nodejs.install",
+            "vcredist140",
+            "notepadplusplus.install",
+            "7zip",
+        ] {
+            assert!(valid_identifier(Chocolatey, ok), "choco {ok}");
+        }
+        for ok in ["firefox", "core22", "gnome-42-2204", "snapd", "firefox_beta"] {
+            assert!(valid_identifier(Snap, ok), "snap {ok}");
+        }
+        for bad in ["x.snap", "a@b", "a:b"] {
+            assert!(!valid_identifier(Snap, bad), "snap {bad}");
+        }
+        for ok in [
+            "org.mozilla.firefox",
+            "org.gimp.GIMP",
+            "com.github.tchx84.Flatseal",
+            "io.github.a_b.C-d",
+        ] {
+            assert!(valid_identifier(Flatpak, ok), "flatpak {ok}");
+        }
+        for bad in ["a@b", "a:b", "a~b"] {
+            assert!(!valid_identifier(Flatpak, bad), "flatpak {bad}");
+        }
+        for ok in [
+            "linux",
+            "gtk3",
+            "libxml2",
+            "python-pip",
+            "lib32-glibc",
+            "gcc-libs",
+            "dbus-broker",
+        ] {
+            assert!(valid_identifier(Pacman, ok), "pacman {ok}");
+        }
+        assert!(valid_identifier(Pacman, "libsigc++"));
+        assert!(!valid_identifier(Pacman, "a:b"));
+        for ok in [
+            "rustup",
+            "stable-x86_64-apple-darwin",
+            "nightly-2026-10-01",
+            "1.88-x86_64-apple-darwin",
+        ] {
+            assert!(valid_identifier(Rustup, ok), "rustup {ok}");
+        }
+        for bad in ["a@b", "a:b", "a+b"] {
+            assert!(!valid_identifier(Rustup, bad), "rustup {bad}");
+        }
     }
 
     #[test]

@@ -2,7 +2,7 @@
 //! apply → verify, with no network and no real package manager.
 
 use patchscope_core::analysis::{AnalyzeOptions, analyze};
-use patchscope_core::apply::{ActionStatus, ApplyEvent, ApplyOptions, apply_plan};
+use patchscope_core::apply::{ActionStatus, ApplyEvent, ApplyOptions, apply_plan, plan_from_saved};
 use patchscope_core::exec::{CommandOutput, Elevation, FakeRunner};
 use patchscope_core::managers::{self, Context};
 use patchscope_core::model::*;
@@ -585,4 +585,213 @@ fn an_elevated_timeout_stops_the_run() {
         !runner.call_lines().iter().any(|l| l.starts_with("npm install")),
         "nothing ran after it"
     );
+}
+
+// ------------------------------------------------- applying a saved scan
+
+/// A scan saved on this machine, as `scan --save` writes it.
+fn saved_scan(runner: &FakeRunner, os: &OsInfo) -> Scan {
+    let report = inventory(runner, os);
+    let analysis = analyze(&report, &research_http(None), &opts(), &|_| {});
+    Scan { report, analysis }
+}
+
+fn saved_update<'a>(scan: &'a mut Scan, key: &str) -> &'a mut AvailableUpdate {
+    scan.report
+        .managers
+        .iter_mut()
+        .flat_map(|m| m.updates.iter_mut())
+        .find(|u| u.key() == key)
+        .unwrap()
+}
+
+#[test]
+fn a_saved_scan_cannot_add_updates_the_machine_does_not_offer() {
+    let mut scan = saved_scan(&recorded_runner(), &os_macos("26.7.1"));
+    // A crafted tap formula: brew would tap attacker/evil and run its Ruby.
+    let mut evil = saved_update(&mut scan, "homebrew:jq").clone();
+    evil.id = "attacker/evil/git".into();
+    evil.name = "git".into();
+    scan.report
+        .managers
+        .iter_mut()
+        .find(|m| m.id == ManagerId::Homebrew)
+        .unwrap()
+        .updates
+        .push(evil);
+
+    let live = recorded_runner();
+    let (_, plan) = plan_from_saved(
+        &scan,
+        &os_macos("26.7.1"),
+        &live,
+        &Policy::default(),
+        &Selection::Keys(vec!["homebrew:attacker/evil/git".into(), "homebrew:jq".into()]),
+        &|_| {},
+    )
+    .unwrap();
+    let keys: Vec<&str> = plan.actions.iter().map(|a| a.key.as_str()).collect();
+    assert_eq!(keys, ["homebrew:jq"]);
+    assert!(plan.actions.iter().all(|a| !a.command.contains("attacker")));
+    let e = plan
+        .excluded
+        .iter()
+        .find(|e| e.key == "homebrew:attacker/evil/git")
+        .expect("refused with a reason");
+    assert!(e.reason.contains("no longer offered by Homebrew"), "{}", e.reason);
+
+    // Listing a manager twice does not plan its updates twice.
+    let brew = scan.report.manager(ManagerId::Homebrew).unwrap().clone();
+    scan.report.managers.push(brew);
+    let (_, plan) = plan_from_saved(
+        &scan,
+        &os_macos("26.7.1"),
+        &recorded_runner(),
+        &Policy::default(),
+        &Selection::Keys(vec!["homebrew:jq".into()]),
+        &|_| {},
+    )
+    .unwrap();
+    assert_eq!(plan.actions.len(), 1, "{:?}", plan.actions);
+}
+
+#[test]
+fn a_saved_scan_cannot_change_what_an_update_is() {
+    let major = "Software Update found the following new or updated software:\n* Label: macOS Golden Gate 27.0-26A100\n\tTitle: macOS Golden Gate 27.0, Version: 27.0, Size: 17654321KiB, Recommended: YES, Action: restart, \n";
+    let su = || {
+        FakeRunner::new()
+            .respond("softwareupdate --list", CommandOutput::ok(major))
+            .respond("id -u", CommandOutput::ok("501\n"))
+    };
+    let key = "softwareupdate:macOS Golden Gate 27.0-26A100";
+    let os = os_macos("26.7.1");
+    let mut scan = saved_scan(&su(), &os);
+    assert_eq!(saved_update(&mut scan, key).kind, UpdateKind::OsUpgrade);
+    // Edited to look like a point release that needs no restart.
+    saved_update(&mut scan, key).kind = UpdateKind::OsUpdate;
+    saved_update(&mut scan, key).restart_required = false;
+    let sel = Selection::Keys(vec![key.into()]);
+
+    let (_, plan) = plan_from_saved(&scan, &os, &su(), &Policy::default(), &sel, &|_| {}).unwrap();
+    assert!(plan.actions.is_empty(), "{:?}", plan.actions);
+    assert!(
+        plan.excluded.iter().any(|e| e.reason.contains("major OS upgrade")),
+        "{:?}",
+        plan.excluded
+    );
+
+    let mut policy = Policy::default();
+    policy.apply.allow_os_upgrades = true;
+    policy.apply.allow_restart_required = false;
+    let (_, plan) = plan_from_saved(&scan, &os, &su(), &policy, &sel, &|_| {}).unwrap();
+    assert!(plan.actions.is_empty(), "{:?}", plan.actions);
+    assert!(
+        plan.excluded.iter().any(|e| e.reason.contains("needs a restart")),
+        "{:?}",
+        plan.excluded
+    );
+
+    // The architecture is this machine's, not the file's.
+    policy.apply.allow_restart_required = true;
+    let mut arm = os.clone();
+    arm.arch = "arm64".into();
+    let (report, plan) = plan_from_saved(&scan, &arm, &su(), &policy, &sel, &|_| {}).unwrap();
+    assert_eq!(report.os.arch, "arm64");
+    assert!(plan.actions.is_empty(), "{:?}", plan.actions);
+    assert!(
+        plan.excluded.iter().any(|e| e.reason.contains("Apple silicon")),
+        "{:?}",
+        plan.excluded
+    );
+
+    // And the version installed is the one the manager offers now.
+    let mut scan = saved_scan(&recorded_runner(), &os);
+    saved_update(&mut scan, "npm-global:minimist").available_version = "https://evil.example/x.tgz".into();
+    let (_, plan) = plan_from_saved(
+        &scan,
+        &os,
+        &recorded_runner(),
+        &Policy::default(),
+        &Selection::Keys(vec!["npm-global:minimist".into()]),
+        &|_| {},
+    )
+    .unwrap();
+    assert_eq!(plan.actions.len(), 1);
+    assert!(
+        plan.actions[0].command.ends_with("minimist@1.2.8"),
+        "{}",
+        plan.actions[0].command
+    );
+}
+
+#[test]
+fn a_scan_from_another_machine_is_refused() {
+    let scan = saved_scan(&recorded_runner(), &os_macos("26.7.1"));
+    for live in [
+        os_macos("26.7.2"),
+        OsInfo {
+            build: Some("25H2".into()),
+            ..os_macos("26.7.1")
+        },
+        OsInfo {
+            kernel: "25.7.0".into(),
+            ..os_macos("26.7.1")
+        },
+    ] {
+        let err = plan_from_saved(
+            &scan,
+            &live,
+            &recorded_runner(),
+            &Policy::default(),
+            &Selection::All,
+            &|_| {},
+        )
+        .unwrap_err();
+        assert!(err.contains("scan again"), "{err}");
+    }
+}
+
+#[test]
+fn a_saved_pacman_selection_cannot_hide_other_pending_packages() {
+    let os = OsInfo {
+        family: OsFamily::Linux,
+        name: "Arch Linux".into(),
+        version: "rolling".into(),
+        build: None,
+        kernel: "6.16.1-arch1-1".into(),
+        arch: "x86_64".into(),
+        distro_id: Some("arch".into()),
+        distro_version_id: None,
+        edition: None,
+    };
+    let pacman = |pending: &str| {
+        FakeRunner::new()
+            .respond("pacman --version", CommandOutput::ok("Pacman v7.0.0\n"))
+            .respond(
+                "pacman -Q",
+                CommandOutput::ok("firefox 142.0-1\nlinux 6.16.1.arch1-1\n"),
+            )
+            .respond("checkupdates", CommandOutput::ok(pending))
+    };
+    let ctx = Context::new(os.clone());
+    let inv = managers::inventory(&managers::Pacman, &pacman("firefox 142.0-1 -> 143.0-1\n"), &ctx);
+    let mut report = inventory(&FakeRunner::new(), &os);
+    report.managers = vec![inv];
+    let analysis = analyze(&report, &research_http(None), &opts(), &|_| {});
+    let scan = Scan { report, analysis };
+
+    // Since the scan, the kernel is pending too; -Syu would install it.
+    let live = pacman("firefox 142.0-1 -> 143.0-1\nlinux 6.16.1.arch1-1 -> 6.16.2.arch1-1\n");
+    let (_, plan) = plan_from_saved(
+        &scan,
+        &os,
+        &live,
+        &Policy::default(),
+        &Selection::Keys(vec!["pacman:firefox".into()]),
+        &|_| {},
+    )
+    .unwrap();
+    assert!(plan.actions.is_empty(), "{:?}", plan.actions);
+    let e = plan.excluded.iter().find(|e| e.key == "pacman:*").expect("explained");
+    assert!(e.reason.contains("linux"), "{}", e.reason);
 }

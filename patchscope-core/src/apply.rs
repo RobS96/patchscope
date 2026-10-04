@@ -4,8 +4,9 @@
 
 use crate::exec::{CommandRunner, Elevation, elevate, is_elevated};
 use crate::managers::{self, Context};
-use crate::model::{ManagerId, OsFamily, OsInfo, SystemReport};
-use crate::plan::{PlannedAction, UpdatePlan};
+use crate::model::{AvailableUpdate, ManagerId, OsFamily, OsInfo, Scan, SystemReport};
+use crate::plan::{Excluded, PlannedAction, Selection, UpdatePlan, build_plan, selected_keys};
+use crate::policy::Policy;
 use crate::util;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashMap};
@@ -430,4 +431,109 @@ pub fn refresh_metadata(
         out.push((inv.id, res));
     }
     out
+}
+
+/// Plan from a saved scan (`apply --from`) without trusting the file beyond
+/// the person's selection. The file contributes which updates (their keys)
+/// and the research; everything that decides whether and how an update is
+/// installed comes from this machine, now:
+///
+/// - a scan of another OS install (name, version, kernel or build) is
+///   refused: scan again;
+/// - each manager with a selected update is asked again, and only updates
+///   it still offers are planned, with its current kind, restart flag,
+///   version and notes (a crafted id, such as a Homebrew tap formula, is
+///   not offered, so it is refused);
+/// - whole-system managers (pacman) keep every update they offer now, so the
+///   plan sees everything `pacman -Syu` would install.
+///
+/// Returns the report the plan was built from (this machine's OS) and the plan.
+pub fn plan_from_saved(
+    scan: &Scan,
+    live_os: &OsInfo,
+    runner: &dyn CommandRunner,
+    policy: &Policy,
+    selection: &Selection,
+    progress: &dyn Fn(&str),
+) -> Result<(SystemReport, UpdatePlan), String> {
+    let saved = &scan.report.os;
+    if (saved.family, &saved.name, &saved.version, &saved.kernel, &saved.build)
+        != (
+            live_os.family,
+            &live_os.name,
+            &live_os.version,
+            &live_os.kernel,
+            &live_os.build,
+        )
+    {
+        let describe = |os: &OsInfo| {
+            format!(
+                "{} (kernel {}{})",
+                os.name,
+                os.kernel,
+                os.build.as_ref().map(|b| format!(", build {b}")).unwrap_or_default()
+            )
+        };
+        return Err(format!(
+            "the scan was taken on {}, but this machine runs {}; its updates may not apply here, so scan again",
+            describe(saved),
+            describe(live_os)
+        ));
+    }
+    let selected = selected_keys(&scan.report, &scan.analysis, selection);
+    let ctx = Context::new(live_os.clone());
+    let mut report = scan.report.clone();
+    report.os = live_os.clone();
+    let mut refused: Vec<Excluded> = Vec::new();
+    let mut asked: BTreeSet<ManagerId> = BTreeSet::new();
+    for inv in &mut report.managers {
+        // The plan reports disabled managers itself.
+        if policy.managers.disabled.contains(&inv.id) {
+            continue;
+        }
+        let wanted: Vec<&AvailableUpdate> = inv.updates.iter().filter(|u| selected.contains(&u.key())).collect();
+        // A manager listed twice in the file is asked (and planned) once.
+        if wanted.is_empty() || !asked.insert(inv.id) {
+            inv.updates.clear();
+            continue;
+        }
+        progress(&format!("Checking {} again…", inv.id.display_name()));
+        let mgr = managers::get(inv.id);
+        let refuse = |u: &AvailableUpdate, reason: String| Excluded {
+            key: u.key(),
+            title: format!(
+                "{} {} → {}",
+                u.name,
+                u.installed_version.as_deref().unwrap_or("installed"),
+                u.available_version
+            ),
+            reason,
+        };
+        let live = match mgr.updates(runner, &ctx) {
+            Ok(l) => l,
+            Err(e) => {
+                refused.extend(
+                    wanted
+                        .iter()
+                        .map(|u| refuse(u, format!("could not ask {} again: {e}", inv.id.display_name()))),
+                );
+                inv.updates.clear();
+                continue;
+            }
+        };
+        refused.extend(
+            wanted
+                .iter()
+                .filter(|u| !live.iter().any(|l| l.key() == u.key()))
+                .map(|u| refuse(u, format!("no longer offered by {}", inv.id.display_name()))),
+        );
+        let saved_keys: Vec<String> = inv.updates.iter().map(|u| u.key()).collect();
+        inv.updates = live
+            .into_iter()
+            .filter(|l| mgr.upgrade_all_only() || saved_keys.contains(&l.key()))
+            .collect();
+    }
+    let mut plan = build_plan(&report, &scan.analysis, policy, selection);
+    plan.excluded.extend(refused);
+    Ok((report, plan))
 }

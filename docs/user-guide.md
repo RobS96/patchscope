@@ -86,7 +86,12 @@ patchscope apply --from scan.json --only npm-global:minimist --yes
 | `--stop-on-failure` | Stop at the first failed update (default: carry on and report). |
 
 The selection options (`--min-severity`, `--only`, `--security-only`) and
-`--from` work as for `plan`.
+`--from` work as for `plan`, except that `apply --from` uses the saved scan
+only to pick the updates: it refuses a scan taken on another machine or OS
+version, asks each package manager again, leaves out any update no longer
+offered, and installs what the manager offers now. On Arch, the single
+`pacman -Syu` action is planned only when every pending pacman update is
+selected and allowed by the policy, since it upgrades all of them.
 
 ### `refresh`
 

@@ -24,9 +24,9 @@ shown before it runs:
 | Homebrew | `brew upgrade --formula NAME` / `brew upgrade --cask NAME` |
 | Mac App Store | `mas upgrade ID` |
 | macOS Software Update | `softwareupdate --install LABEL` (root; `--agree-to-license` only for an allowed major upgrade; never `--restart`). On Apple silicon, macOS updates are left to System Settings, which can ask for the owner's password. |
-| APT | `apt-get install --only-upgrade -y -o APT::Get::Always-Include-Phased-Updates=true -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold NAME` (root, `DEBIAN_FRONTEND=noninteractive`; locally edited config files are kept) |
+| APT | `apt-get install --only-upgrade --no-remove -y -o APT::Get::Always-Include-Phased-Updates=true -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold NAME` (root, `DEBIAN_FRONTEND=noninteractive`; locally edited config files are kept; an upgrade that would remove a package fails instead) |
 | DNF | `dnf upgrade -y NAME` (root) |
-| pacman | `pacman -Syu --noconfirm` (root; Arch does not support partial upgrades, so it is one whole-system action) |
+| pacman | `pacman -Syu --noconfirm` (root; Arch does not support partial upgrades, so it is one whole-system action, planned only when every pending pacman update is selected and allowed by the policy) |
 | Flatpak | `flatpak update -y --noninteractive APP` |
 | Snap | `snap refresh NAME` (root) |
 | winget | `winget upgrade --id ID --exact --silent --accept-package-agreements …` |
@@ -46,11 +46,24 @@ the machine.
 - Every identifier is checked against what its own manager lists before
   it is planned: package-name characters only for APT, DNF, pacman, Snap,
   Flatpak, winget and Chocolatey (so no `./file.deb`, `/tmp/x.rpm`,
-  `https://…` or `name=version`); `user/tap/name` but no paths or URLs for
-  Homebrew; digits for the App Store; the npm grammar; GUIDs for Windows
-  Update. Anything starting with `-` or containing control characters is
-  refused everywhere. This matters for `apply --from scan.json`, where
-  the ids come from a file.
+  `https://…` or `name=version`), narrowed per manager to what it really
+  lists: Debian package names (optionally `:arch`) for APT, so no trailing
+  `-` (which asks apt-get to remove the package) and no `~`/`?` patterns;
+  no `@group` or `module:stream` for DNF; never `all` for Chocolatey;
+  toolchain names for rustup. `user/tap/name` but no paths or URLs for
+  Homebrew; digits for the App Store; the npm grammar, and a plain version
+  (`1.2.8`, not a URL, `npm:`, `github:` or `file:` spec) after the `@`;
+  GUIDs for Windows Update. Anything starting with `-` or containing
+  control characters is refused everywhere.
+- A saved scan is trusted only for which updates to install.
+  `apply --from scan.json` refuses a scan taken on another OS install
+  (name, version, kernel or build differ), then asks each manager with a
+  selected update again: an update it no longer offers is left out ("no
+  longer offered by …"), and what is installed (kind, version, restart,
+  notes) and the OS details the policy checks come from this machine, not
+  the file. A crafted id (such as a Homebrew tap formula, which brew would
+  fetch and evaluate) is therefore never planned unless the manager itself
+  lists it.
 - Windows UpdateIDs must be GUIDs before they are placed in the
   PowerShell script, which re-checks them itself.
 - The macOS administrator prompt quotes each argument for the shell and

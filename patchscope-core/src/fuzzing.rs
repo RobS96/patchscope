@@ -6,7 +6,8 @@
 //! functions feed arbitrary bytes through them. A panic is a bug; so is a
 //! broken safety invariant, which they assert:
 //!
-//! - nothing planned carries an identifier its manager would not list;
+//! - nothing planned carries an identifier its manager would not list, or
+//!   a version that is not a plain version where it reaches a command;
 //! - an HTML report never contains a raw `<script`.
 
 use crate::analysis::{AnalyzeOptions, analyze};
@@ -184,6 +185,12 @@ pub fn pipeline(data: &[u8]) {
                 "planned an invalid {} identifier: {:?}",
                 u.manager,
                 u.id
+            );
+            assert!(
+                managers::valid_version(u.manager, &u.available_version),
+                "planned an invalid {} version: {:?}",
+                u.manager,
+                u.available_version
             );
         }
     }

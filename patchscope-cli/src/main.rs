@@ -3,8 +3,8 @@
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use patchscope_core::analysis::{AnalyzeOptions, analyze};
-use patchscope_core::apply::{ActionStatus, ApplyEvent, ApplyOptions, apply_plan, refresh_metadata};
-use patchscope_core::discover::{DiscoverOptions, discover};
+use patchscope_core::apply::{ActionStatus, ApplyEvent, ApplyOptions, apply_plan, plan_from_saved, refresh_metadata};
+use patchscope_core::discover::{self, DiscoverOptions, discover};
 use patchscope_core::exec::{Elevation, SystemRunner};
 use patchscope_core::model::{Analysis, ManagerId, Scan, Severity, SystemReport};
 use patchscope_core::plan::{Selection, UpdatePlan, build_plan};
@@ -119,7 +119,9 @@ struct ResearchArgs {
     /// Use only cached research data; make no network requests.
     #[arg(long)]
     offline: bool,
-    /// Reuse a scan saved with `scan --save` instead of scanning again.
+    /// Reuse a scan saved with `scan --save` instead of scanning again. With
+    /// `apply`, it only picks the updates: each one must still be offered
+    /// by its manager on this machine, which decides what it installs.
     #[arg(long, value_name = "FILE")]
     from: Option<PathBuf>,
 }
@@ -500,7 +502,21 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
         Command::Apply(a) => {
             let policy = effective_policy(load_policy(cli.policy.as_ref())?, &a.select);
             let s = scan(&ui, &a.discover, &a.research, &policy)?;
-            let plan = build_plan(&s.report, &s.analysis, &policy, &selection(&a.select));
+            let (report, plan) = match &a.research.from {
+                // A saved scan picks the updates; this machine, asked again
+                // now, decides what they are.
+                Some(path) => {
+                    ui.progress("Checking the saved scan against this machine…");
+                    let runner = SystemRunner::new();
+                    let os = discover::os::detect(&runner, &mut Vec::new());
+                    plan_from_saved(&s, &os, &runner, &policy, &selection(&a.select), &|m| ui.progress(m))
+                        .map_err(|e| format!("{}: {e}", path.display()))?
+                }
+                None => {
+                    let plan = build_plan(&s.report, &s.analysis, &policy, &selection(&a.select));
+                    (s.report, plan)
+                }
+            };
             print!("{}", print_plan(&ui, &plan));
             if plan.is_empty() {
                 return Ok(ExitCode::SUCCESS);
@@ -529,7 +545,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                 ..Default::default()
             };
             println!();
-            let r = apply_plan(&plan, &s.report.os, &runner, &opts, &|e| match e {
+            let r = apply_plan(&plan, &report.os, &runner, &opts, &|e| match e {
                 ApplyEvent::Started {
                     index,
                     total,

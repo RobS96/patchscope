@@ -36,20 +36,29 @@ pub(crate) fn parse_dpkg_query(text: &str, ecosystem: Option<&str>) -> Vec<Packa
 
 /// `apt list --upgradable`:
 /// `curl/noble-updates,noble-security 8.5.0-2ubuntu10.6 amd64 [upgradable from: 8.5.0-2ubuntu10.5]`
-pub(crate) fn parse_apt_upgradable(text: &str) -> Vec<AvailableUpdate> {
+///
+/// With multiarch, a foreign-architecture copy is its own line with the same
+/// name (`libc6/… i386`); given dpkg's native architecture, those get the
+/// `name:arch` id apt-get takes, so the two do not share one key.
+pub(crate) fn parse_apt_upgradable(text: &str, native_arch: Option<&str>) -> Vec<AvailableUpdate> {
     text.lines()
         .filter_map(|l| {
             let (name_suites, rest) = l.split_once(' ')?;
             let (name, suites) = name_suites.split_once('/')?;
             let mut it = rest.split_whitespace();
             let version = it.next()?;
+            let arch = it.next().unwrap_or_default();
+            let id = match native_arch {
+                Some(native) if !arch.is_empty() && arch != native && arch != "all" => format!("{name}:{arch}"),
+                _ => name.to_string(),
+            };
             let from = l
                 .split("upgradable from: ")
                 .nth(1)
                 .map(|s| s.trim_end_matches(']').trim().to_string());
             Some(AvailableUpdate {
                 manager: ManagerId::Apt,
-                id: name.to_string(),
+                id,
                 name: name.to_string(),
                 installed_version: from,
                 available_version: version.to_string(),
@@ -60,6 +69,26 @@ pub(crate) fn parse_apt_upgradable(text: &str) -> Vec<AvailableUpdate> {
             })
         })
         .collect()
+}
+
+/// A Debian package name (lowercase letters, digits, `+`, `-`, `.`; at
+/// least two characters, starting with a letter or digit), optionally
+/// `:arch`. apt-get reads more than names: a trailing `-` means "remove",
+/// `~` and `?` start search patterns, `=`/`/` pick versions and releases.
+pub(crate) fn valid_debian_package(id: &str) -> bool {
+    let (name, arch) = match id.split_once(':') {
+        Some((n, a)) => (n, Some(a)),
+        None => (id, None),
+    };
+    let lower = |s: &str, extra: &str| {
+        s.chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || extra.contains(c))
+    };
+    name.len() >= 2
+        && name.starts_with(|c: char| c.is_ascii_lowercase() || c.is_ascii_digit())
+        && !name.ends_with('-')
+        && lower(name, "+-.")
+        && arch.is_none_or(|a| !a.is_empty() && !a.starts_with('-') && !a.ends_with('-') && lower(a, "-"))
 }
 
 /// Packages whose update only takes full effect after a reboot.
@@ -98,12 +127,25 @@ impl Manager for Apt {
         Ok(parse_dpkg_query(&text, ctx.osv_distro_ecosystem().as_deref()))
     }
     fn updates(&self, runner: &dyn CommandRunner, _ctx: &Context) -> ListResult<Vec<AvailableUpdate>> {
+        // Best effort: without it, foreign-architecture lines keep the bare name.
+        let native = run_list(
+            runner,
+            c_locale(CommandSpec::new("dpkg", &["--print-architecture"])).timeout(mins(1)),
+            &[],
+        )
+        .ok()
+        .map(|t| t.trim().to_string())
+        .filter(|a| {
+            !a.is_empty()
+                && a.chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+        });
         let text = run_list(
             runner,
             c_locale(CommandSpec::new("apt", &["list", "--upgradable"])),
             &[],
         )?;
-        Ok(parse_apt_upgradable(&text))
+        Ok(parse_apt_upgradable(&text, native.as_deref()))
     }
     fn refresh_command(&self) -> Option<CommandSpec> {
         Some(
@@ -120,6 +162,8 @@ impl Manager for Apt {
             &[
                 "install",
                 "--only-upgrade",
+                // Abort rather than remove anything to satisfy an upgrade.
+                "--no-remove",
                 "-y",
                 "-o",
                 "APT::Get::Always-Include-Phased-Updates=true",
@@ -584,6 +628,7 @@ mod tests {
             [
                 "install",
                 "--only-upgrade",
+                "--no-remove",
                 "-y",
                 "-o",
                 "APT::Get::Always-Include-Phased-Updates=true",
@@ -596,6 +641,47 @@ mod tests {
         );
         assert!(cmd.needs_elevation);
         assert!(cmd.env.contains(&("DEBIAN_FRONTEND".into(), "noninteractive".into())));
+    }
+
+    #[test]
+    fn apt_install_never_removes() {
+        // `apt-get install name-` removes `name`; --no-remove makes apt-get
+        // abort instead of removing anything, whatever the argument.
+        let u = AvailableUpdate {
+            manager: ManagerId::Apt,
+            id: "curl".into(),
+            name: "curl".into(),
+            installed_version: None,
+            available_version: "8.5.0-2ubuntu10.6".into(),
+            kind: UpdateKind::Package,
+            security: false,
+            restart_required: false,
+            notes: None,
+        };
+        assert!(Apt.install_command(&u).args.iter().any(|a| a == "--no-remove"));
+    }
+
+    #[test]
+    fn apt_foreign_architectures_get_their_own_key() {
+        let upg = "Listing...\n\
+                   libc6/noble-updates 2.39-0ubuntu8.6 amd64 [upgradable from: 2.39-0ubuntu8.5]\n\
+                   libc6/noble-updates 2.39-0ubuntu8.6 i386 [upgradable from: 2.39-0ubuntu8.5]\n\
+                   tzdata/noble-updates 2025b-0ubuntu0.24.04.1 all [upgradable from: 2025a-0ubuntu0.24.04]\n";
+        let r = FakeRunner::new()
+            .respond("dpkg --print-architecture", CommandOutput::ok("amd64\n"))
+            .respond("apt list --upgradable", CommandOutput::ok(upg));
+        let u = Apt
+            .updates(&r, &test_ctx(OsFamily::Linux, Some(("ubuntu", "24.04"))))
+            .unwrap();
+        let keys: Vec<String> = u.iter().map(|u| u.key()).collect();
+        assert_eq!(keys, ["apt:libc6", "apt:libc6:i386", "apt:tzdata"]);
+        assert_eq!(u[1].name, "libc6");
+        assert!(u[1].restart_required);
+        assert_eq!(Apt.install_command(&u[1]).args.last().unwrap(), "libc6:i386");
+        // Without dpkg's answer nothing is qualified (the old behaviour).
+        let r = FakeRunner::new().respond("apt list --upgradable", CommandOutput::ok(upg));
+        let u = Apt.updates(&r, &test_ctx(OsFamily::Linux, None)).unwrap();
+        assert_eq!(u[1].id, "libc6");
     }
 
     #[test]

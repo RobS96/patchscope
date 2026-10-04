@@ -24,6 +24,25 @@ uses [Semantic Versioning](https://semver.org/).
 - The end-to-end tests' deliberately vulnerable npm package is checked
   against a pinned integrity hash before it is planted.
 
+### Fixed
+
+- APT packages of a foreign architecture get their own key (`name:arch`).
+
+### Security
+
+- `apply --from` re-checks a saved scan against this machine. The scan must
+  come from this OS (name, version, kernel, build), and each selected update
+  must still be offered by its package manager, which supplies the version,
+  kind and restart flag that get planned. A crafted or edited scan could
+  previously install a package spec of its choosing through npm, remove a
+  package through APT (a trailing `-`), make Homebrew tap an arbitrary
+  repository, or slip an update past the policy.
+- Package identifiers follow each manager's own grammar (APT, DNF, pacman,
+  Snap, Flatpak, Chocolatey, rustup), npm versions must be plain versions,
+  and `apt-get` runs with `--no-remove`.
+- pacman's full-system upgrade is planned only when every pending pacman
+  package is selected and allowed by the policy.
+
 ## [0.1.0] - 2026-10-03
 
 ### Added

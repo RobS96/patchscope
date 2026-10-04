@@ -59,7 +59,8 @@ user installs; patchscope uses them when present.
   serial readable only by root), `lspci` and `/sys/class/power_supply`.
 - Run `patchscope refresh` (or your usual `apt-get update`) first; without
   fresh metadata the manager cannot know about new versions.
-- Arch Linux: updates are always one whole-system `pacman -Syu`. Install
+- Arch Linux: updates are always one whole-system `pacman -Syu`, planned
+  only when no pending package is protected, excluded or deselected. Install
   `pacman-contrib` (and `fakeroot`) for `checkupdates`, which sees new
   versions without syncing the system database; without it patchscope
   falls back to `pacman -Qu`.

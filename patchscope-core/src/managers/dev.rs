@@ -90,6 +90,13 @@ pub(crate) fn valid_npm_name(s: &str) -> bool {
     !body.is_empty() && !s.starts_with('-') && body.chars().all(|c| c.is_ascii_alphanumeric() || "-._~".contains(c))
 }
 
+/// A plain version (`1.2.8`, `2.0.0-beta.1`, `1.0.0+build.5`). npm reads
+/// whatever follows `name@` as a spec, so a URL, `npm:` alias, `github:`,
+/// `file:` or git spec there would install a different package.
+pub(crate) fn valid_npm_version(s: &str) -> bool {
+    s.starts_with(|c: char| c.is_ascii_digit()) && s.chars().all(|c| c.is_ascii_alphanumeric() || ".-+".contains(c))
+}
+
 impl Manager for NpmGlobal {
     fn id(&self) -> ManagerId {
         ManagerId::NpmGlobal
@@ -118,7 +125,8 @@ impl Manager for NpmGlobal {
         parse_npm_outdated(&text)
     }
     fn install_command(&self, u: &AvailableUpdate) -> CommandSpec {
-        let target = if valid_npm_name(&u.id) {
+        // Both are checked by the plan too; this is the backstop.
+        let target = if valid_npm_name(&u.id) && valid_npm_version(&u.available_version) {
             format!("{}@{}", u.id, u.available_version)
         } else {
             "invalid-package-name".into()
@@ -181,7 +189,7 @@ pub(crate) fn parse_rustup_toolchains(text: &str) -> Vec<Package> {
         .collect()
 }
 
-fn valid_toolchain(s: &str) -> bool {
+pub(crate) fn valid_toolchain(s: &str) -> bool {
     !s.is_empty() && !s.starts_with('-') && s.chars().all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c))
 }
 
@@ -255,6 +263,11 @@ mod tests {
         assert!(!valid_npm_name("a b"));
         assert!(!valid_npm_name("@/x"));
         assert!(!valid_npm_name("git+https://x"));
+        assert!(valid_npm_version("1.2.8"));
+        assert!(!valid_npm_version("npm:evil@1.0.0"));
+        let mut u = parse_npm_outdated(r#"{"minimist":{"current":"1.2.0","latest":"1.2.8"}}"#).unwrap();
+        u[0].available_version = "https://evil.example/x.tgz".into();
+        assert!(!NpmGlobal.install_command(&u[0]).display().contains("evil"));
     }
 
     #[test]
