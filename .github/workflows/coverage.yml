@@ -1,0 +1,86 @@
+name: Coverage
+
+# How much of the code the unit, pipeline and GUI tests execute, measured
+# with LLVM source-based coverage (cargo-llvm-cov). Reported, not gated:
+# the job summary shows line, region and function coverage per file and in
+# total, and the full report is kept as an artifact. End-to-end runs are
+# not included (they exercise real systems, not instrumented builds).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "41 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: coverage-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Install Linux build deps (GUI windowing)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libx11-dev libxkbcommon-dev libxkbcommon-x11-dev libgl1-mesa-dev pkg-config
+
+      # The runner's own rustup and a pinned cargo-llvm-cov from crates.io,
+      # like the other CI tools: no third-party action.
+      - name: Install the stable toolchain and cargo-llvm-cov
+        run: |
+          rustup toolchain install stable --profile minimal --component llvm-tools-preview
+          rustup default stable
+          cargo install --locked cargo-llvm-cov@0.9.1
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      # Test code is left out of the totals: the question is how much of
+      # the product the tests reach, not how much of the tests run.
+      - name: Measure
+        run: |
+          set -euo pipefail
+          ignore='(^|/)(tests/|fuzz/)|ui_tests\.rs$|layout_tests\.rs$'
+          cargo llvm-cov --locked --workspace --ignore-filename-regex "$ignore" --json --output-path coverage.json
+          cargo llvm-cov report --ignore-filename-regex "$ignore" --summary-only | tee coverage.txt
+
+      - name: Summarise
+        run: |
+          set -euo pipefail
+          {
+            echo "## Test coverage"
+            echo
+            jq -r '.data[0].totals
+                   | "| | Covered | Total | % |\n|---|---:|---:|---:|\n"
+                     + "| Lines | \(.lines.covered) | \(.lines.count) | \(.lines.percent * 10 | round / 10) |\n"
+                     + "| Regions | \(.regions.covered) | \(.regions.count) | \(.regions.percent * 10 | round / 10) |\n"
+                     + "| Functions | \(.functions.covered) | \(.functions.count) | \(.functions.percent * 10 | round / 10) |"' coverage.json
+            echo
+            echo '<details><summary>Per file</summary>'
+            echo
+            echo '```'
+            cat coverage.txt
+            echo '```'
+            echo '</details>'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage
+          path: |
+            coverage.json
+            coverage.txt
+          retention-days: 14
