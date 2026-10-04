@@ -10,6 +10,9 @@ use patchscope_core::model::{Analysis, ManagerId, Scan, Severity, SystemReport};
 use patchscope_core::plan::{Selection, UpdatePlan, build_plan};
 use patchscope_core::policy::Policy;
 use patchscope_core::research::http::UreqClient;
+// Text that came from the machine, a package manager, a research source or
+// a saved scan file goes through `safe` before it is printed.
+use patchscope_core::util::display_safe as safe;
 use patchscope_core::{managers, paths, report, util};
 use std::io::{IsTerminal, Write};
 use std::path::PathBuf;
@@ -267,7 +270,7 @@ impl Ui {
     }
     fn progress(&self, msg: &str) {
         if !self.quiet {
-            eprintln!("  {msg}");
+            eprintln!("  {}", safe(msg));
         }
     }
     fn sev(&self, s: Severity) -> String {
@@ -345,19 +348,23 @@ fn print_system(ui: &Ui, r: &SystemReport) -> String {
     o += &format!("{}\n", ui.bold("System"));
     o += &format!(
         "  OS         {}{}\n",
-        r.os.name,
-        r.os.build.as_ref().map(|b| format!(" (build {b})")).unwrap_or_default()
+        safe(&r.os.name),
+        r.os.build
+            .as_ref()
+            .map(|b| format!(" (build {})", safe(b)))
+            .unwrap_or_default()
     );
-    o += &format!("  Kernel     {} · {}\n", r.os.kernel, r.os.arch);
+    o += &format!("  Kernel     {} · {}\n", safe(&r.os.kernel), safe(&r.os.arch));
     if let Some(m) = &hw.model {
-        o += &format!("  Model      {m}\n");
+        o += &format!("  Model      {}\n", safe(m));
     }
     if let Some(f) = &hw.firmware {
-        o += &format!("  Firmware   {f}\n");
+        o += &format!("  Firmware   {}\n", safe(f));
     }
     o += &format!(
         "  CPU        {} ({} logical cores)\n",
-        hw.cpu.brand, hw.cpu.logical_cores
+        safe(&hw.cpu.brand),
+        hw.cpu.logical_cores
     );
     o += &format!(
         "  Memory     {} ({} available)\n",
@@ -367,18 +374,18 @@ fn print_system(ui: &Ui, r: &SystemReport) -> String {
     for d in &hw.disks {
         o += &format!(
             "  Disk       {} — {} free of {}\n",
-            d.mount_point,
+            safe(&d.mount_point),
             util::human_bytes(d.available_bytes),
             util::human_bytes(d.total_bytes)
         );
     }
     for g in &hw.gpus {
-        o += &format!("  GPU        {g}\n");
+        o += &format!("  GPU        {}\n", safe(g));
     }
     if let Some(b) = &hw.battery {
         o += &format!(
             "  Battery    {} {} {}\n",
-            b.condition.clone().unwrap_or_default(),
+            safe(b.condition.as_deref().unwrap_or_default()),
             b.max_capacity_percent
                 .map(|p| format!("· {p}% capacity"))
                 .unwrap_or_default(),
@@ -386,7 +393,7 @@ fn print_system(ui: &Ui, r: &SystemReport) -> String {
         );
     }
     for rt in &r.runtimes {
-        o += &format!("  {:<10} {}\n", rt.display_name, rt.version);
+        o += &format!("  {:<10} {}\n", safe(&rt.display_name), safe(&rt.version));
     }
     o += &format!("\n{}\n", ui.bold("Package sources"));
     for m in r.managers.iter().filter(|m| m.available) {
@@ -395,14 +402,17 @@ fn print_system(ui: &Ui, r: &SystemReport) -> String {
             m.id.display_name(),
             m.installed.len(),
             m.updates.len(),
-            m.error.as_ref().map(|e| format!("  ⚠ {e}")).unwrap_or_default()
+            m.error.as_ref().map(|e| format!("  ⚠ {}", safe(e))).unwrap_or_default()
         );
     }
     o
 }
 
 fn print_notes(a: &Analysis) -> String {
-    report::research_notes(a).iter().map(|n| format!("  ⚠ {n}\n")).collect()
+    report::research_notes(a)
+        .iter()
+        .map(|n| format!("  ⚠ {}\n", safe(n)))
+        .collect()
 }
 
 fn print_analysis(ui: &Ui, a: &Analysis) -> String {
@@ -426,14 +436,19 @@ fn print_analysis(ui: &Ui, a: &Analysis) -> String {
         o += "\n";
     }
     for f in &a.findings {
-        o += &format!("  {} {}\n", ui.sev(f.severity), f.title);
+        o += &format!("  {} {}\n", ui.sev(f.severity), safe(&f.title));
         if f.severity >= Severity::High {
-            o += &format!("           {}\n", f.rationale);
+            o += &format!("           {}\n", safe(&f.rationale));
         }
     }
     o += &format!("\n{}\n", ui.bold("Sources"));
     for src in &a.sources {
-        o += &format!("  {} {}: {}\n", if src.ok { "✓" } else { "✗" }, src.name, src.detail);
+        o += &format!(
+            "  {} {}: {}\n",
+            if src.ok { "✓" } else { "✗" },
+            safe(&src.name),
+            safe(&src.detail)
+        );
     }
     o
 }
@@ -444,19 +459,59 @@ fn print_plan(ui: &Ui, p: &UpdatePlan) -> String {
         o += "  Nothing to install.\n";
     }
     for (i, a) in p.actions.iter().enumerate() {
-        o += &format!("  {:>2}. {} {}  [{}]\n", i + 1, ui.sev(a.severity), a.title, a.key);
         o += &format!(
-            "      $ {}{}{}\n",
-            a.command,
+            "  {:>2}. {} {}  [{}]\n",
+            i + 1,
+            ui.sev(a.severity),
+            safe(&a.title),
+            safe(&a.key)
+        );
+        let command = safe(&a.command);
+        o += &format!(
+            "      $ {}{}{}{}\n",
+            command,
             if a.needs_elevation { "   (as administrator)" } else { "" },
-            if a.restart_required { "   (restart needed)" } else { "" }
+            if a.restart_required { "   (restart needed)" } else { "" },
+            if command != a.command {
+                "   (hidden or control characters shown as \\u{..}, backslashes doubled)"
+            } else {
+                ""
+            }
         );
     }
     if !p.excluded.is_empty() {
         o += &format!("\n  Left out ({}):\n", p.excluded.len());
         for e in &p.excluded {
-            o += &format!("    - {} — {}\n", e.title, e.reason);
+            o += &format!("    - {} — {}\n", safe(&e.title), safe(&e.reason));
         }
+    }
+    o
+}
+
+/// What `apply` prints as each action starts and finishes.
+fn print_event(e: &ApplyEvent, dry_run: bool) -> String {
+    let mut o = String::new();
+    match e {
+        ApplyEvent::Started {
+            index,
+            total,
+            action,
+            command,
+        } => {
+            o += &format!("[{}/{}] {}\n", index + 1, total, safe(&action.title));
+            if dry_run {
+                o += &format!("      would run: {}\n", safe(command));
+            }
+        }
+        ApplyEvent::Finished { result, .. } if !dry_run => {
+            o += &format!("      → {} ({})\n", result.status.label(), safe(&result.message));
+            if result.status == ActionStatus::Failed && !result.output_tail.is_empty() {
+                for l in result.output_tail.lines().take(8) {
+                    o += &format!("        | {}\n", safe(l));
+                }
+            }
+        }
+        _ => {}
     }
     o
 }
@@ -580,29 +635,10 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             };
             println!();
             let r = apply_plan(&plan, &report.os, &runner, &opts, &|e| match e {
-                ApplyEvent::Started {
-                    index,
-                    total,
-                    action,
-                    command,
-                } => {
-                    println!("[{}/{}] {}", index + 1, total, action.title);
-                    if a.dry_run {
-                        println!("      would run: {command}");
-                    }
-                }
-                ApplyEvent::Finished { result, .. } if !a.dry_run => {
-                    println!("      → {} ({})", result.status.label(), result.message);
-                    if result.status == ActionStatus::Failed && !result.output_tail.is_empty() {
-                        for l in result.output_tail.lines().take(8) {
-                            println!("        | {l}");
-                        }
-                    }
-                }
                 ApplyEvent::Verifying(m) => ui.progress(&format!("Verifying {}…", m.display_name())),
                 // Shown even with --quiet.
-                ApplyEvent::Warning(w) => eprintln!("warning: {w}"),
-                _ => {}
+                ApplyEvent::Warning(w) => eprintln!("warning: {}", safe(w)),
+                e => print!("{}", print_event(&e, a.dry_run)),
             })
             .map_err(|e| e.to_string())?;
             println!(
@@ -641,7 +677,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                     Ok(()) => println!("✓ {}", m.display_name()),
                     Err(e) => {
                         failed = true;
-                        println!("✗ {}: {e}", m.display_name());
+                        println!("✗ {}: {}", m.display_name(), util::display_safe_multiline(&e));
                     }
                 }
             }
@@ -655,7 +691,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                 let state = if !m.supported_on(os) {
                     "not for this OS".to_string()
                 } else if let Some(p) = runner.which(m.program()) {
-                    format!("found ({})", p.display())
+                    format!("found ({})", safe(&p.display().to_string()))
                 } else {
                     "not installed".to_string()
                 };
@@ -666,7 +702,10 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
         Command::Policy { action } => {
             let path = cli.policy.clone().or_else(paths::policy_file);
             match action {
-                PolicyAction::Show => print!("{}", load_policy(cli.policy.as_ref())?.to_toml()),
+                PolicyAction::Show => print!(
+                    "{}",
+                    util::display_safe_multiline(&load_policy(cli.policy.as_ref())?.to_toml())
+                ),
                 PolicyAction::Path => println!(
                     "{}",
                     path.map(|p| p.display().to_string())
@@ -693,7 +732,7 @@ fn main() -> ExitCode {
     match run(Cli::parse()) {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("patchscope: {e}");
+            eprintln!("patchscope: {}", util::display_safe_multiline(&e));
             ExitCode::FAILURE
         }
     }
@@ -703,6 +742,12 @@ fn main() -> ExitCode {
 mod tests {
     use super::*;
     use clap::CommandFactory;
+    use patchscope_core::apply::ActionResult;
+    use patchscope_core::model::{
+        BatteryInfo, CpuInfo, DiskInfo, Finding, HardwareInfo, ManagerInventory, OsFamily, OsInfo, Runtime,
+        SourceStatus,
+    };
+    use patchscope_core::plan::{Excluded, PlannedAction};
 
     #[test]
     fn cli_definition_is_valid() {
@@ -730,5 +775,188 @@ mod tests {
         };
         assert_eq!(selection(&s), Selection::AtLeast(Severity::High));
         assert!(effective_policy(Policy::default(), &s).apply.security_only);
+    }
+
+    /// Erase the line above, CSI (C1) erase, carriage return, right-to-left
+    /// override, isolate, zero-width space.
+    const HOSTILE: &str = "\x1b[1A\x1b[2K\u{9b}2K\r\u{202e}gpj.exe\u{2066}\u{200b}";
+
+    /// Fails if `out` carries any character a terminal would act on or hide.
+    fn assert_inert(out: &str) {
+        for c in out.chars() {
+            assert!(
+                !matches!(
+                    c,
+                    '\x1b' | '\u{9b}' | '\r' | '\u{202e}' | '\u{2066}' | '\u{200b}' | '\x07'
+                ),
+                "{c:?} reached the terminal: {out:?}"
+            );
+        }
+    }
+
+    fn plain() -> Ui {
+        Ui {
+            quiet: true,
+            color: false,
+        }
+    }
+
+    fn action(title: &str, command: &str) -> PlannedAction {
+        PlannedAction {
+            key: format!("softwareupdate:{title}"),
+            manager: ManagerId::Softwareupdate,
+            title: title.into(),
+            severity: Severity::High,
+            finding_ids: vec![],
+            updates: vec![],
+            command: command.into(),
+            needs_elevation: true,
+            restart_required: false,
+        }
+    }
+
+    #[test]
+    fn plan_shown_before_confirmation_is_inert() {
+        let plan = UpdatePlan {
+            generated_at: "2026-10-04T00:00:00Z".into(),
+            actions: vec![
+                action("git 1 → 2", "brew upgrade --formula git"),
+                action(
+                    &format!("Label{HOSTILE} 1 → 2"),
+                    &format!("softwareupdate --install 'Label{HOSTILE}'"),
+                ),
+            ],
+            excluded: vec![Excluded {
+                key: format!("apt:{HOSTILE}"),
+                title: HOSTILE.into(),
+                reason: HOSTILE.into(),
+            }],
+        };
+        let out = print_plan(&plain(), &plan);
+        assert_inert(&out);
+        // The earlier command is still there, and the hidden characters are visible.
+        assert!(out.contains("$ brew upgrade --formula git"), "{out}");
+        assert!(out.contains(r"\u{1b}[1A\u{1b}[2K\u{9b}2K\u{d}\u{202e}gpj.exe"), "{out}");
+        assert!(out.contains("hidden or control characters"), "{out}");
+    }
+
+    #[test]
+    fn findings_sources_and_system_are_inert() {
+        let finding = |sev| Finding {
+            id: "x".into(),
+            severity: sev,
+            category: patchscope_core::model::Category::Vulnerability,
+            title: format!("t{HOSTILE}"),
+            manager: None,
+            subject: HOSTILE.into(),
+            installed_version: None,
+            rationale: format!("r{HOSTILE}\nsecond line"),
+            advisories: vec![],
+            remediation: None,
+            risk_score: 0.0,
+            references: vec![],
+        };
+        let analysis = Analysis {
+            schema_version: 1,
+            generated_at: HOSTILE.into(),
+            offline: false,
+            sources: vec![SourceStatus {
+                name: HOSTILE.into(),
+                ok: false,
+                detail: HOSTILE.into(),
+            }],
+            summary: Default::default(),
+            findings: vec![finding(Severity::Critical), finding(Severity::Low)],
+        };
+        let out = print_analysis(&plain(), &analysis);
+        assert_inert(&out);
+        assert!(!out.contains("\nsecond line"), "a rationale stays on one line: {out}");
+
+        let report = SystemReport {
+            schema_version: 1,
+            tool_version: HOSTILE.into(),
+            generated_at: HOSTILE.into(),
+            host: Default::default(),
+            os: OsInfo {
+                family: OsFamily::Macos,
+                name: HOSTILE.into(),
+                version: "26".into(),
+                build: Some(HOSTILE.into()),
+                kernel: HOSTILE.into(),
+                arch: HOSTILE.into(),
+                distro_id: None,
+                distro_version_id: None,
+                edition: None,
+            },
+            hardware: HardwareInfo {
+                model: Some(HOSTILE.into()),
+                firmware: Some(HOSTILE.into()),
+                cpu: CpuInfo {
+                    brand: HOSTILE.into(),
+                    ..Default::default()
+                },
+                disks: vec![DiskInfo {
+                    mount_point: HOSTILE.into(),
+                    ..Default::default()
+                }],
+                gpus: vec![HOSTILE.into()],
+                battery: Some(BatteryInfo {
+                    cycle_count: Some(1),
+                    condition: Some(HOSTILE.into()),
+                    max_capacity_percent: Some(90),
+                }),
+                ..Default::default()
+            },
+            runtimes: vec![Runtime {
+                product: "python".into(),
+                display_name: HOSTILE.into(),
+                version: HOSTILE.into(),
+                path_command: "python3".into(),
+            }],
+            managers: vec![ManagerInventory {
+                id: ManagerId::Homebrew,
+                available: true,
+                version: None,
+                installed: vec![],
+                updates: vec![],
+                error: Some(format!("{HOSTILE}\nmore")),
+            }],
+            warnings: vec![],
+        };
+        let out = print_system(&plain(), &report);
+        assert_inert(&out);
+    }
+
+    #[test]
+    fn apply_progress_is_inert() {
+        let a = action(&format!("t{HOSTILE}"), "x");
+        let command = format!("softwareupdate --install 'L{HOSTILE}'");
+        let started = ApplyEvent::Started {
+            index: 0,
+            total: 1,
+            action: &a,
+            command: &command,
+        };
+        let out = print_event(&started, true);
+        assert_inert(&out);
+        assert!(out.contains(r"\u{202e}"), "{out}");
+        let result = ActionResult {
+            key: a.key.clone(),
+            title: a.title.clone(),
+            command,
+            status: ActionStatus::Failed,
+            exit_code: Some(1),
+            duration_ms: 1,
+            message: format!("m{HOSTILE}"),
+            output_tail: format!("one{HOSTILE}\ntwo\x07"),
+        };
+        let finished = ApplyEvent::Finished {
+            index: 0,
+            total: 1,
+            result: &result,
+        };
+        let out = print_event(&finished, false);
+        assert_inert(&out);
+        assert_eq!(out.lines().count(), 3, "{out}");
     }
 }
