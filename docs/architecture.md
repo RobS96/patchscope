@@ -23,7 +23,7 @@ package managers, research sources or safety lives in `patchscope-core`.
 | `analysis` | Joins discovery and research into ranked `Finding`s ([methodology](methodology.md)). Each source can fail independently; the analysis records its status and continues. |
 | `policy` | `patchscope.toml`: parse strictly (`deny_unknown_fields`), match protected patterns. |
 | `plan` | Selection + policy → ordered `PlannedAction`s and `Excluded` reasons. Order: user-level managers, then applications, then system packages, then OS updates (which may need a restart). |
-| `apply` | Lock → for each action: elevate, run, record → verify by re-querying → audit. Emits `ApplyEvent`s for live progress. |
+| `apply` | Lock → for each action: elevate, run, record → verify by re-querying → audit. Emits `ApplyEvent`s for live progress. `plan_from_saved` plans a saved scan against this machine's live manager listings (`apply --from`). |
 | `report` | Markdown and self-contained HTML renderings. |
 | `paths` | Platform cache/config/data directories. |
 | `util` | Dates without a date library, version comparison, globbing. |
