@@ -42,6 +42,8 @@ tests: `cargo test -p patchscope-core --test live -- --ignored`.
 - Every command goes through `CommandRunner` with a timeout, as an
   argument vector. Never `sh -c`, never string-built command lines.
 - Listing must stay read-only and unprivileged.
+- New behaviour comes with tests, and a bug fix with a test that fails
+  without it.
 - A new install command needs a unit test asserting its exact arguments,
   and a row in [docs/safety.md](docs/safety.md#what-apply-runs).
 - Parsers are tested on **real recorded output**, including the "nothing
