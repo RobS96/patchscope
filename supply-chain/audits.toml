@@ -2,3 +2,73 @@
 # cargo-vet audits file
 
 [audits]
+
+[[trusted.getrandom]]
+criteria = "safe-to-deploy"
+user-id = 5059 # Artyom Pavlov (newpavlov)
+start = "2019-06-28"
+end = "2027-10-03"
+notes = "Trusted-publisher policy entry, NOT a code audit: added 2026-10-04 by a Claude Code session at Robert Shubert's request (Q4 cargo-vet backlog, ~/security/cargo-vet/backlog-triage-2026-10-03.md). Long-standing maintainer / official project release pipeline of a widely used security-relevant crate (publisher checked on crates.io); revisit at end date."
+
+[[trusted.getrandom]]
+criteria = "safe-to-deploy"
+user-id = 39279
+start = "2020-09-10"
+end = "2027-10-03"
+notes = "Trusted-publisher policy entry, NOT a code audit: added 2026-10-04 by a Claude Code session at Robert Shubert's request (Q4 cargo-vet backlog, ~/security/cargo-vet/backlog-triage-2026-10-03.md). Long-standing maintainer / official project release pipeline of a widely used security-relevant crate (publisher checked on crates.io); revisit at end date."
+
+[[trusted.getrandom]]
+criteria = "safe-to-deploy"
+trusted-publisher = "github:rust-random/getrandom"
+start = "2025-12-27"
+end = "2027-10-03"
+notes = "Trusted-publisher policy entry, NOT a code audit: added 2026-10-04 by a Claude Code session at Robert Shubert's request (Q4 cargo-vet backlog, ~/security/cargo-vet/backlog-triage-2026-10-03.md). Long-standing maintainer / official project release pipeline of a widely used security-relevant crate (publisher checked on crates.io); revisit at end date."
+
+[[trusted.httparse]]
+criteria = "safe-to-deploy"
+user-id = 359 # Sean McArthur (seanmonstar)
+start = "2019-07-03"
+end = "2027-10-03"
+notes = "Trusted-publisher policy entry, NOT a code audit: added 2026-10-04 by a Claude Code session at Robert Shubert's request (Q4 cargo-vet backlog, ~/security/cargo-vet/backlog-triage-2026-10-03.md). Long-standing maintainer / official project release pipeline of a widely used security-relevant crate (publisher checked on crates.io); revisit at end date."
+
+[[trusted.idna_adapter]]
+criteria = "safe-to-deploy"
+user-id = 4484 # Henri Sivonen (hsivonen)
+start = "2024-07-03"
+end = "2027-10-03"
+notes = "Trusted-publisher policy entry, NOT a code audit: added 2026-10-04 by a Claude Code session at Robert Shubert's request (Q4 cargo-vet backlog, ~/security/cargo-vet/backlog-triage-2026-10-03.md). Long-standing maintainer / official project release pipeline of a widely used security-relevant crate (publisher checked on crates.io); revisit at end date."
+
+[[trusted.openssl-probe]]
+criteria = "safe-to-deploy"
+user-id = 4556 # Dirkjan Ochtman (djc)
+start = "2025-12-29"
+end = "2027-10-03"
+notes = "Trusted-publisher policy entry, NOT a code audit: added 2026-10-04 by a Claude Code session at Robert Shubert's request (Q4 cargo-vet backlog, ~/security/cargo-vet/backlog-triage-2026-10-03.md). Long-standing maintainer / official project release pipeline of a widely used security-relevant crate (publisher checked on crates.io); revisit at end date."
+
+[[trusted.rustls-platform-verifier]]
+criteria = "safe-to-deploy"
+user-id = 146896 # ComplexSpaces (complexspaces)
+start = "2024-01-03"
+end = "2027-10-03"
+notes = "Trusted-publisher policy entry, NOT a code audit: added 2026-10-04 by a Claude Code session at Robert Shubert's request (Q4 cargo-vet backlog, ~/security/cargo-vet/backlog-triage-2026-10-03.md). Long-standing maintainer / official project release pipeline of a widely used security-relevant crate (publisher checked on crates.io); revisit at end date."
+
+[[trusted.security-framework-sys]]
+criteria = "safe-to-deploy"
+user-id = 988 # Kornel (kornelski)
+start = "2019-02-27"
+end = "2027-10-03"
+notes = "Trusted-publisher policy entry, NOT a code audit: added 2026-10-04 by a Claude Code session at Robert Shubert's request (Q4 cargo-vet backlog, ~/security/cargo-vet/backlog-triage-2026-10-03.md). Long-standing maintainer / official project release pipeline of a widely used security-relevant crate (publisher checked on crates.io); revisit at end date."
+
+[[trusted.untrusted]]
+criteria = "safe-to-deploy"
+user-id = 2342 # Brian Smith (briansmith)
+start = "2019-07-03"
+end = "2027-10-03"
+notes = "Trusted-publisher policy entry, NOT a code audit: added 2026-10-04 by a Claude Code session at Robert Shubert's request (Q4 cargo-vet backlog, ~/security/cargo-vet/backlog-triage-2026-10-03.md). Long-standing maintainer / official project release pipeline of a widely used security-relevant crate (publisher checked on crates.io); revisit at end date."
+
+[[trusted.zeroize]]
+criteria = "safe-to-deploy"
+trusted-publisher = "github:RustCrypto/utils"
+start = "2026-06-12"
+end = "2027-10-03"
+notes = "Trusted-publisher policy entry, NOT a code audit: added 2026-10-04 by a Claude Code session at Robert Shubert's request (Q4 cargo-vet backlog, ~/security/cargo-vet/backlog-triage-2026-10-03.md). Long-standing maintainer / official project release pipeline of a widely used security-relevant crate (publisher checked on crates.io); revisit at end date."
