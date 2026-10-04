@@ -27,7 +27,7 @@ shown before it runs:
 | APT | `apt-get install --only-upgrade --no-remove -y -o APT::Get::Always-Include-Phased-Updates=true -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold NAME` (root, `DEBIAN_FRONTEND=noninteractive`; locally edited config files are kept; an upgrade that would remove a package fails instead) |
 | DNF | `dnf upgrade -y NAME` (root) |
 | pacman | `pacman -Syu --noconfirm` (root; Arch does not support partial upgrades, so it is one whole-system action, planned only when every pending pacman update is selected and allowed by the policy) |
-| Flatpak | `flatpak update -y --noninteractive APP` |
+| Flatpak | `flatpak update -y --noninteractive APP-OR-RUNTIME` |
 | Snap | `snap refresh NAME` (root) |
 | winget | `winget upgrade --id ID --exact --silent --accept-package-agreements …` |
 | Chocolatey | `choco upgrade NAME -y --no-progress` (Administrator) |

@@ -495,3 +495,18 @@ impl Drop for TempDir {
         let _ = std::fs::remove_dir_all(&self.0);
     }
 }
+
+#[test]
+fn overview_says_when_research_is_incomplete() {
+    let dir = tempfile_dir();
+    let mut h = harness(Arc::new(FakeBackend::default()), dir.path());
+    h.state_mut().scan = Some(recorded_scan());
+    h.run_steps(2);
+    assert!(h.query_by_label_contains("Research incomplete").is_none());
+
+    let mut scan = recorded_scan();
+    scan.analysis.sources[0].ok = false;
+    h.state_mut().scan = Some(scan);
+    h.run_steps(2);
+    h.get_by_label_contains("Research incomplete: OSV.dev");
+}

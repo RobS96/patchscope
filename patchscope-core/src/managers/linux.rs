@@ -477,7 +477,9 @@ impl Manager for Flatpak {
     fn installed(&self, runner: &dyn CommandRunner, _ctx: &Context) -> ListResult<Vec<Package>> {
         let text = run_list(
             runner,
-            CommandSpec::new("flatpak", &["list", "--app", "--columns=application,version"]),
+            // Apps and runtimes: runtimes (org.freedesktop.Platform, GNOME,
+            // KDE) ship the openssl, webkitgtk and ffmpeg their apps use.
+            CommandSpec::new("flatpak", &["list", "--columns=application,version"]),
             &[],
         )?;
         Ok(parse_tab_rows(&text)
@@ -495,15 +497,16 @@ impl Manager for Flatpak {
     fn updates(&self, runner: &dyn CommandRunner, _ctx: &Context) -> ListResult<Vec<AvailableUpdate>> {
         let text = run_list(
             runner,
-            CommandSpec::new(
-                "flatpak",
-                &["remote-ls", "--updates", "--app", "--columns=application,version"],
-            )
-            .timeout(mins(5)),
+            CommandSpec::new("flatpak", &["remote-ls", "--updates", "--columns=application,version"]).timeout(mins(5)),
             &[],
         )?;
+        // A runtime installed in several branches (23.08, 24.08) is listed
+        // once per branch; `flatpak update NAME` updates every installed
+        // branch, so it is one update.
+        let mut seen = std::collections::HashSet::new();
         Ok(parse_tab_rows(&text)
             .into_iter()
+            .filter(|r| seen.insert(r[0].clone()))
             .map(|r| AvailableUpdate {
                 manager: ManagerId::Flatpak,
                 id: r[0].clone(),
@@ -774,6 +777,51 @@ mod tests {
         assert_eq!(p[0].version, "1:3.5.1-3.el9_7");
         assert_eq!(p[0].source_version.as_deref(), Some("1:3.5.1-3.el9_7"));
         assert_eq!(p[0].ecosystem.as_deref(), Some("AlmaLinux:9"));
+    }
+
+    #[test]
+    fn flatpak_lists_and_updates_runtimes() {
+        // `--app` hides runtimes (org.freedesktop.Platform, GNOME, KDE), which
+        // carry openssl, webkitgtk and ffmpeg for every app built on them.
+        let apps = "org.mozilla.firefox\t143.0\n";
+        let all = "org.mozilla.firefox\t143.0\norg.freedesktop.Platform\t24.08.21\norg.freedesktop.Platform\t23.08.30\norg.freedesktop.Platform.GL.default\t25.1.7\n";
+        let ups = "org.mozilla.firefox\t143.0.1\norg.freedesktop.Platform\t24.08.22\norg.freedesktop.Platform\t23.08.31\norg.gnome.Platform\t\n";
+        let r = FakeRunner::new()
+            .respond(
+                "flatpak list --app --columns=application,version",
+                CommandOutput::ok(apps),
+            )
+            .respond("flatpak list --columns=application,version", CommandOutput::ok(all))
+            .respond(
+                "flatpak remote-ls --updates --app --columns=application,version",
+                CommandOutput::ok("org.mozilla.firefox\t143.0.1\n"),
+            )
+            .respond(
+                "flatpak remote-ls --updates --columns=application,version",
+                CommandOutput::ok(ups),
+            );
+        let ctx = test_ctx(OsFamily::Linux, Some(("debian", "13")));
+        let installed = Flatpak.installed(&r, &ctx).unwrap();
+        assert!(
+            installed
+                .iter()
+                .any(|p| p.name == "org.freedesktop.Platform" && p.version == "24.08.21")
+        );
+        let updates = Flatpak.updates(&r, &ctx).unwrap();
+        let ids: Vec<&str> = updates.iter().map(|u| u.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            ["org.mozilla.firefox", "org.freedesktop.Platform", "org.gnome.Platform"],
+            "one update per ref name: `flatpak update NAME` updates every installed branch"
+        );
+        for u in &updates {
+            assert!(crate::managers::valid_identifier(ManagerId::Flatpak, &u.id), "{}", u.id);
+        }
+        let cmd = Flatpak.install_command(&updates[1]);
+        assert_eq!(
+            cmd.args,
+            ["update", "-y", "--noninteractive", "org.freedesktop.Platform"]
+        );
     }
 
     #[test]

@@ -892,3 +892,133 @@ fn a_saved_pacman_selection_cannot_hide_other_pending_packages() {
     let e = plan.excluded.iter().find(|e| e.key == "pacman:*").expect("explained");
     assert!(e.reason.contains("linux"), "{}", e.reason);
 }
+
+fn source<'a>(a: &'a Analysis, name: &str) -> &'a SourceStatus {
+    a.sources
+        .iter()
+        .find(|s| s.name == name)
+        .unwrap_or_else(|| panic!("no {name} source: {:#?}", a.sources))
+}
+
+#[test]
+fn advisory_detail_failures_are_reported() {
+    let runner = recorded_runner();
+    let report = inventory(&runner, &os_macos("26.7.1"));
+    let http = FakeHttp::new()
+        .post_route(
+            "https://api.osv.dev/v1/querybatch",
+            r#"{"results":[{"vulns":[{"id":"GHSA-vh95-rmgr-6w4m"}]},{}]}"#,
+        )
+        .fail(
+            "https://api.osv.dev/v1/vulns/",
+            "https://api.osv.dev/v1/vulns/GHSA-vh95-rmgr-6w4m: http status: 429",
+        )
+        .route(
+            "https://www.cisa.gov/",
+            r#"{"catalogVersion":"2026.10.02","vulnerabilities":[]}"#,
+        )
+        .route("https://api.first.org/data/v1/epss", r#"{"data":[]}"#)
+        .route("https://endoflife.date/api/v1/products/macos/", EOL_MACOS);
+    let a = analyze(&report, &http, &opts(), &|_| {});
+    let osv = source(&a, "OSV.dev");
+    assert!(
+        !osv.ok,
+        "an advisory known only by id cannot be matched to KEV/EPSS: {osv:?}"
+    );
+    assert!(
+        osv.detail.contains("1 advisory record could not be fetched"),
+        "{}",
+        osv.detail
+    );
+    assert!(osv.detail.contains("429"), "{}", osv.detail);
+}
+
+#[test]
+fn unqueried_sources_are_info_findings_and_shown_in_reports() {
+    let runner = recorded_runner();
+    let report = inventory(&runner, &os_macos("26.7.1"));
+    let http = FakeHttp::new().fail("https://", "network unreachable").post_fail_when(
+        "https://api.osv.dev/v1/querybatch",
+        "",
+        "network unreachable",
+    );
+    let a = analyze(&report, &http, &opts(), &|_| {});
+    let f = a
+        .findings
+        .iter()
+        .find(|f| f.id == "research:OSV.dev")
+        .expect("an Info finding for the source that could not be queried");
+    assert_eq!(f.severity, Severity::Info);
+    assert!(f.rationale.contains("network unreachable"), "{}", f.rationale);
+    assert!(a.findings.iter().any(|f| f.id == "research:endoflife.date"));
+    let md = report::markdown(&report, Some(&a), None);
+    assert!(md.contains("Research incomplete"), "{md}");
+    let html = report::html(&report, Some(&a), None);
+    assert!(html.contains("Research incomplete"));
+
+    let ok = analyze(&report, &research_http(None), &opts(), &|_| {});
+    assert!(!ok.findings.iter().any(|f| f.id.starts_with("research:")));
+    assert!(!report::markdown(&report, Some(&ok), None).contains("Research incomplete"));
+}
+
+#[test]
+fn offline_results_say_how_old_they_are() {
+    let runner = recorded_runner();
+    let report = inventory(&runner, &os_macos("26.7.1"));
+    let dir = tempfile::tempdir().unwrap();
+    let online = AnalyzeOptions {
+        cache_dir: Some(dir.path().into()),
+        cache_ttl: Duration::from_secs(3600),
+        ..opts()
+    };
+    let _ = analyze(&report, &research_http(None), &online, &|_| {});
+    let off = AnalyzeOptions {
+        offline: true,
+        ..online
+    };
+    let a = analyze(&report, &FakeHttp::new(), &off, &|_| {});
+    for name in ["OSV.dev", "CISA KEV", "FIRST EPSS", "endoflife.date"] {
+        let s = source(&a, name);
+        assert!(s.ok, "a warm cache is not a failure: {s:?}");
+        assert!(s.detail.contains("offline, data as of 20"), "{s:?}");
+    }
+    assert!(!a.findings.iter().any(|f| f.id.starts_with("research:")));
+}
+
+#[test]
+fn epss_cap_reports_what_it_left_out_and_keeps_the_newest() {
+    let runner = recorded_runner();
+    let report = inventory(&runner, &os_macos("26.7.1"));
+    // 2001 CVEs across 2000-2020; the newest is CVE-2020-1000.
+    let vulns: Vec<String> = (0..2001)
+        .map(|i| format!(r#"{{"id":"UBUNTU-CVE-{}-{}"}}"#, 2000 + i / 100, 1000 + i % 100))
+        .collect();
+    let batch = format!(r#"{{"results":[{{"vulns":[{}]}},{{}}]}}"#, vulns.join(","));
+    let http = FakeHttp::new()
+        .post_route("https://api.osv.dev/v1/querybatch", &batch)
+        .route(
+            "https://www.cisa.gov/",
+            r#"{"catalogVersion":"2026.10.02","vulnerabilities":[]}"#,
+        )
+        .route("https://api.first.org/data/v1/epss", r#"{"data":[]}"#)
+        .route("https://endoflife.date/api/v1/products/macos/", EOL_MACOS);
+    let o = AnalyzeOptions {
+        max_advisory_details: 0,
+        ..opts()
+    };
+    let a = analyze(&report, &http, &o, &|_| {});
+    let epss = source(&a, "FIRST EPSS");
+    assert!(epss.detail.contains("1 not sent"), "{}", epss.detail);
+    let sent = http.requests.lock().unwrap().clone();
+    assert!(
+        sent.iter()
+            .any(|r| r.contains("api.first.org") && r.contains("CVE-2020-1000")),
+        "the newest CVE is scored"
+    );
+    assert!(
+        !sent
+            .iter()
+            .any(|r| r.contains("api.first.org") && r.contains("CVE-2000-1000")),
+        "the oldest is the one left out"
+    );
+}

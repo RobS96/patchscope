@@ -485,6 +485,10 @@ which updates to install; nothing changes until you confirm.",
                 });
             });
         });
+        for note in report::research_notes(&scan.analysis) {
+            ui.add_space(8.0);
+            ui.colored_label(severity_color(Severity::High, dark), format!("⚠ {note}"));
+        }
         ui.add_space(12.0);
         ui.horizontal(|ui| {
             if ui.button("Review updates →").clicked() {

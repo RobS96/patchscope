@@ -23,7 +23,8 @@ fn osv_finds_known_vulnerabilities() {
             q("Debian:12", "openssl", "3.0.11-1~deb12u1"),
         ],
     )
-    .unwrap();
+    .unwrap()
+    .ids;
     assert!(ids[0].iter().any(|i| i == "GHSA-vh95-rmgr-6w4m"), "{:?}", ids[0]);
     assert!(ids[1].is_empty(), "minimist 1.2.8 is fixed: {:?}", ids[1]);
     assert!(!ids[2].is_empty(), "an old Debian openssl has advisories");

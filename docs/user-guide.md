@@ -50,7 +50,16 @@ patchscope scan --skip-manager mas            # all but these
 patchscope scan --offline                     # cached research only, no network
 patchscope scan --include-identifiers         # hostname, serial, MAC addresses
 patchscope scan --fail-on critical            # exit 2 only for critical findings
+patchscope scan --allow-partial               # no exit 4 when a research source failed
 ```
+
+When a research source (OSV.dev, CISA KEV, FIRST EPSS, endoflife.date)
+cannot be fully queried, the report says **Research incomplete**, lists
+the source as an Info finding and under *Sources*, and `scan` and `plan`
+exit with 4: "no findings" then does not mean "nothing found". With
+`--offline` each source's detail gives the age of the cached data
+(`offline, data as of …`); a warm cache is complete research, a missing
+cache entry is not.
 
 ### `discover`: inventory only
 
@@ -146,12 +155,16 @@ Manager ids: `softwareupdate`, `windows-update`, `apt`, `dnf`, `pacman`,
 
 ## Exit codes
 
-| Code | `scan` | `apply` / `refresh` |
-|---|---|---|
-| 0 | no finding at or above `--fail-on` (default `high`) | every action succeeded (or nothing to do) |
-| 1 | error (bad option, unreadable file …) | error, or refused (another apply running, no confirmation) |
-| 2 | at least one finding at or above `--fail-on` | — |
-| 3 | — | at least one action failed or was skipped |
+| Code | `scan` | `plan` | `apply` / `refresh` |
+|---|---|---|---|
+| 0 | no finding at or above `--fail-on` (default `high`), research complete | plan shown, research complete | every action succeeded (or nothing to do) |
+| 1 | error (bad option, unreadable file …) | error | error, or refused (another apply running, no confirmation) |
+| 2 | at least one finding at or above `--fail-on` | — | — |
+| 3 | — | — | at least one action failed or was skipped |
+| 4 | a research source could not be fully queried (checked before 2) | a research source could not be fully queried | — |
+
+`--allow-partial` turns 4 off: `scan` then exits 0 or 2 by its findings
+alone, and `plan` exits 0. With `--from`, the saved scan's research counts.
 
 ## Automating patchscope
 
@@ -198,6 +211,11 @@ audit log says what.
   without recording what it does. This usually means an earlier run under
   `sudo` left `audit.jsonl` (or its folder) owned by root; give it back to
   your user (`sudo chown -R "$USER" <folder>`).
+- **Research source ✗, "Research incomplete", exit code 4:** a research
+  service could not be reached, rate-limited a request, or returned more
+  result pages than patchscope follows. The source's line under *Sources*
+  says which. Scan again later; `--allow-partial` accepts the partial
+  result.
 - **Research source ✗ / certificate errors behind a corporate proxy:**
   patchscope trusts the operating system's certificate store, or the PEM
   bundle named by `SSL_CERT_FILE` if that is set. `--offline` uses the

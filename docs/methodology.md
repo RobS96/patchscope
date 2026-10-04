@@ -19,12 +19,30 @@ where its knowledge stops.
 
 | Source | What it answers | Request |
 |---|---|---|
-| [OSV.dev](https://osv.dev) | Which published advisories affect *this exact version* of a package | `POST /v1/querybatch` (≤1000 packages per call), `GET /v1/vulns/{id}` for details (8 in parallel, at most 400 per scan) |
+| [OSV.dev](https://osv.dev) | Which published advisories affect *this exact version* of a package | `POST /v1/querybatch` (≤1000 packages per call; a package with more results than one page, such as a distribution's `linux` source package, is asked again with OSV's `page_token`, up to 20 more pages), `GET /v1/vulns/{id}` for details (8 in parallel, at most 400 per scan, shared round-robin across packages) |
 | [CISA KEV](https://www.cisa.gov/known-exploited-vulnerabilities-catalog) | Is the CVE being exploited in the wild? Is it used by ransomware? | the catalogue JSON (~2 MB) |
-| [FIRST EPSS](https://www.first.org/epss/) | Probability of exploitation in the next 30 days | `GET /data/v1/epss?cve=…` (100 CVEs per call) |
+| [FIRST EPSS](https://www.first.org/epss/) | Probability of exploitation in the next 30 days | `GET /data/v1/epss?cve=…` (100 CVEs per call, at most 2000 per scan, newest first) |
 | [endoflife.date](https://endoflife.date) | Is this OS / runtime release still supported, until when, and what is its latest patch release? | `GET /api/v1/products/{product}/` |
 
-Responses are cached for 12 hours. `--offline` uses only the cache.
+Responses are cached for 12 hours. `--offline` uses only the cache, and
+each source's status then says how old the data is (`offline, data as of
+…`, the oldest cached response used).
+
+### When research is incomplete
+
+A source whose query failed, or that answered only in part, is marked ✗
+under *Sources*, becomes an Info finding, and makes the report say
+**Research incomplete**; `scan` and `plan` exit with 4 unless
+`--allow-partial` is given (see [exit codes](user-guide.md#exit-codes)).
+"In part" means: a later page of OSV results could not be read (or there
+were more than 20 pages), or an advisory record could not be fetched. Such
+an advisory is still listed, by id only, but without its record it has no
+severity (so it counts as Medium), no fixed versions and, for GHSA/RUSTSEC
+ids, no CVE alias to match against KEV and EPSS.
+
+The deliberate limits (400 advisory records in full, 2000 CVEs to EPSS)
+are not failures: the source stays ✓ and its status says how many were
+left out.
 
 **What leaves the machine:** package names, versions and their ecosystem
 (to OSV.dev), CVE ids (to FIRST), and product names (to endoflife.date).
@@ -85,6 +103,7 @@ advisory:
 | Battery worn (< 80 % capacity or service condition), sensors ≥ 95 °C | Low |
 | New major OS release available | Info |
 | A package source could not be queried | Info |
+| A research source could not be (fully) queried | Info |
 
 ### Risk score (ordering)
 
