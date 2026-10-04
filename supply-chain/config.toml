@@ -449,18 +449,6 @@ criteria = "safe-to-deploy"
 version = "1.1.0"
 criteria = "safe-to-deploy"
 
-[[exemptions.getrandom]]
-version = "0.2.17"
-criteria = "safe-to-deploy"
-
-[[exemptions.getrandom]]
-version = "0.3.4"
-criteria = "safe-to-deploy"
-
-[[exemptions.getrandom]]
-version = "0.4.3"
-criteria = "safe-to-deploy"
-
 [[exemptions.gl_generator]]
 version = "0.14.0"
 criteria = "safe-to-deploy"
@@ -517,10 +505,6 @@ criteria = "safe-to-deploy"
 version = "1.5.0"
 criteria = "safe-to-deploy"
 
-[[exemptions.httparse]]
-version = "1.10.1"
-criteria = "safe-to-deploy"
-
 [[exemptions.icu_collections]]
 version = "2.3.0"
 criteria = "safe-to-deploy"
@@ -547,10 +531,6 @@ criteria = "safe-to-deploy"
 
 [[exemptions.icu_provider]]
 version = "2.3.1"
-criteria = "safe-to-deploy"
-
-[[exemptions.idna_adapter]]
-version = "1.2.2"
 criteria = "safe-to-deploy"
 
 [[exemptions.image]]
@@ -797,10 +777,6 @@ criteria = "safe-to-deploy"
 version = "1.70.2"
 criteria = "safe-to-deploy"
 
-[[exemptions.openssl-probe]]
-version = "0.2.1"
-criteria = "safe-to-deploy"
-
 [[exemptions.orbclient]]
 version = "0.3.55"
 criteria = "safe-to-deploy"
@@ -977,10 +953,6 @@ criteria = "safe-to-deploy"
 version = "1.15.1"
 criteria = "safe-to-deploy"
 
-[[exemptions.rustls-platform-verifier]]
-version = "0.7.1"
-criteria = "safe-to-deploy"
-
 [[exemptions.rustls-platform-verifier-android]]
 version = "0.2.0"
 criteria = "safe-to-deploy"
@@ -1011,10 +983,6 @@ criteria = "safe-to-deploy"
 
 [[exemptions.security-framework]]
 version = "3.7.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.security-framework-sys]]
-version = "2.17.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.self_cell]]
@@ -1183,10 +1151,6 @@ criteria = "safe-to-deploy"
 
 [[exemptions.unicode-ident]]
 version = "1.0.26"
-criteria = "safe-to-deploy"
-
-[[exemptions.untrusted]]
-version = "0.9.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.ureq]]
@@ -1543,10 +1507,6 @@ criteria = "safe-to-deploy"
 
 [[exemptions.zerofrom-derive]]
 version = "0.1.8"
-criteria = "safe-to-deploy"
-
-[[exemptions.zeroize]]
-version = "1.9.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.zerotrie]]
