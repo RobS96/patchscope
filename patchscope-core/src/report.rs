@@ -98,6 +98,9 @@ pub fn markdown(report: &SystemReport, analysis: Option<&Analysis>, plan: Option
             s.advisories,
             s.kev_advisories
         );
+        for n in research_notes(a) {
+            let _ = writeln!(o, "> **{}**\n", md_escape(&n));
+        }
         let _ = writeln!(o, "| Severity | Finding | Category | Fix |\n|---|---|---|---|");
         for f in &a.findings {
             let _ = writeln!(
@@ -204,6 +207,23 @@ fn link(url: &str) -> String {
     }
 }
 
+/// One-line notes that belong above any findings list: research that was
+/// incomplete, and research served from the offline cache.
+pub fn research_notes(a: &Analysis) -> Vec<String> {
+    let mut notes = Vec::new();
+    let missing = a.incomplete_sources();
+    if !missing.is_empty() {
+        notes.push(format!(
+            "Research incomplete: {} could not be fully queried, so findings may be missing or rated too low (see Sources).",
+            missing.iter().map(|s| s.name.as_str()).collect::<Vec<_>>().join(", ")
+        ));
+    }
+    if a.offline {
+        notes.push("Offline: research data comes from the local cache (see Sources for how old it is).".into());
+    }
+    notes
+}
+
 const CSS: &str = r#"
 :root{--bg:#fbfbfa;--fg:#1d1d1f;--muted:#6b6b70;--card:#fff;--line:#e4e4e7;
 --critical:#b42318;--high:#c4320a;--medium:#a15c07;--low:#2e6bc6;--info:#6b6b70}
@@ -221,7 +241,7 @@ table{border-collapse:collapse;width:100%}th,td{padding:8px 10px;border-bottom:1
 th{font-size:12px;text-transform:uppercase;color:var(--muted);letter-spacing:.04em}tr:last-child td{border-bottom:0}
 details{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 14px;margin:8px 0}
 summary{cursor:pointer;font-weight:600}code{font:13px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;word-break:break-all}
-a{color:var(--low)}"#;
+a{color:var(--low)}.note{border-left:4px solid var(--high);background:var(--card);padding:8px 12px;border-radius:6px}"#;
 
 pub fn html(report: &SystemReport, analysis: Option<&Analysis>, plan: Option<&UpdatePlan>) -> String {
     let mut o = String::new();
@@ -255,6 +275,9 @@ pub fn html(report: &SystemReport, analysis: Option<&Analysis>, plan: Option<&Up
             "<div class=\"tile\"><b>{}</b>updates ({} security)</div><div class=\"tile\"><b>{}</b>exploited (KEV)</div></div>",
             s.updates_available, s.security_updates, s.kev_advisories
         );
+        for n in research_notes(a) {
+            let _ = write!(o, "<p class=\"note\"><b>{}</b></p>", h(&n));
+        }
     }
     let _ = write!(o, "<section><h2>System</h2><div class=\"table\"><table>");
     let mut row = |k: &str, v: String| {

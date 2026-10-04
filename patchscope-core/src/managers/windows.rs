@@ -10,6 +10,10 @@ use serde::Deserialize;
 
 pub struct Winget;
 
+/// APPINSTALLER_CLI_ERROR_UPDATE_NOT_APPLICABLE (0x8A15002B) as the i32
+/// exit status Windows reports.
+const WINGET_NO_APPLICABLE_UPDATE: i32 = 0x8A15_002Bu32 as i32;
+
 const WINGET_COMMON: [&str; 2] = ["--accept-source-agreements", "--disable-interactivity"];
 
 fn winget(args: &[&str]) -> CommandSpec {
@@ -70,12 +74,12 @@ impl Manager for Winget {
         Ok(parse_winget_list(&run_list(runner, winget(&["list"]), &[])?))
     }
     fn updates(&self, runner: &dyn CommandRunner, _ctx: &Context) -> ListResult<Vec<AvailableUpdate>> {
-        // winget exits non-zero (0x8A15002B) when there is nothing to upgrade.
-        let out = runner.run(&winget(&["upgrade"])).map_err(|e| e.to_string())?;
-        if out.timed_out {
-            return Err("`winget upgrade` timed out".into());
-        }
-        Ok(parse_winget_upgrade(&out.stdout))
+        // winget exits 0x8A15002B (UPDATE_NOT_APPLICABLE) when there is
+        // nothing to upgrade. Any other failure (a source that could not be
+        // searched, an unaccepted agreement, no network) is an error, not
+        // an empty list.
+        let text = run_list(runner, winget(&["upgrade"]), &[WINGET_NO_APPLICABLE_UPDATE])?;
+        Ok(parse_winget_upgrade(&text))
     }
     fn install_command(&self, u: &AvailableUpdate) -> CommandSpec {
         winget(&[
@@ -330,6 +334,40 @@ mod tests {
         let cmd = Winget.install_command(&u[0]);
         assert_eq!(&cmd.args[..4], ["upgrade", "--id", "Git.Git", "--exact"]);
         assert!(!cmd.needs_elevation, "winget elevates per installer through UAC");
+    }
+
+    #[test]
+    fn winget_upgrade_failures_are_errors() {
+        use crate::exec::{CommandOutput, FakeRunner};
+        let ctx = crate::managers::test_ctx(OsFamily::Windows, None);
+        let cmd = "winget upgrade --accept-source-agreements --disable-interactivity";
+        // 0x8A15002B (APPINSTALLER_CLI_ERROR_UPDATE_NOT_APPLICABLE) as an i32.
+        assert_eq!(WINGET_NO_APPLICABLE_UPDATE, -1_978_335_189);
+        assert_eq!(0x1_0000_0000i64 - 0x8A15_002Bi64, 1_978_335_189);
+        let none = FakeRunner::new().respond(
+            cmd,
+            CommandOutput::with_status(
+                -1_978_335_189,
+                "No installed package found matching input criteria.\n",
+                "",
+            ),
+        );
+        assert!(Winget.updates(&none, &ctx).unwrap().is_empty());
+        let table = FakeRunner::new().respond(cmd, CommandOutput::ok(WINGET_UPGRADE));
+        assert_eq!(Winget.updates(&table, &ctx).unwrap().len(), 3);
+        // A source or network failure is not "nothing to update".
+        let failed = FakeRunner::new().respond(
+            cmd,
+            CommandOutput::with_status(
+                -1_978_335_217, // 0x8A15000F: data required by the source is missing
+                "Failed when searching source: winget\nAn unexpected error occurred while executing the command:\n",
+                "",
+            ),
+        );
+        let err = Winget.updates(&failed, &ctx).unwrap_err();
+        assert!(err.contains("Failed when searching source"), "{err}");
+        let other = FakeRunner::new().respond(cmd, CommandOutput::with_status(1, "", "boom"));
+        assert!(Winget.updates(&other, &ctx).is_err());
     }
 
     #[test]

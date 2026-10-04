@@ -23,6 +23,9 @@ uses [Semantic Versioning](https://semver.org/).
 
 - The end-to-end tests' deliberately vulnerable npm package is checked
   against a pinned integrity hash before it is planted.
+- `scan` and `plan` exit with 4 when a research source could not be
+  queried (`--allow-partial` accepts that). Each such source is an Info
+  finding, and every output says the research was incomplete.
 
 ### Fixed
 
@@ -34,6 +37,14 @@ uses [Semantic Versioning](https://semver.org/).
   log is made owner-only, and write failures are reported.
 - Windows: elevation is read from the process token (`whoami /groups`)
   instead of `net session`, which fails when the Server service is off.
+- OSV.dev results beyond the first page are read.
+- Advisory records that could not be fetched mark OSV.dev as incomplete
+  instead of becoming Medium-severity stubs; the 400-record limit is shared
+  across packages.
+- winget errors are reported instead of reading as "no updates".
+- Flatpak runtimes are listed and updated, not only apps.
+- Offline scans say how old their cached data is, and the EPSS limit says
+  how many CVEs it left out (the oldest).
 
 ### Security
 

@@ -543,6 +543,14 @@ pub struct Analysis {
     pub findings: Vec<Finding>,
 }
 
+impl Analysis {
+    /// Research sources that could not be (fully) queried. When this is not
+    /// empty, "no findings" does not mean "nothing found".
+    pub fn incomplete_sources(&self) -> Vec<&SourceStatus> {
+        self.sources.iter().filter(|s| !s.ok).collect()
+    }
+}
+
 /// A discovery report and its analysis, saved together so a scan taken on
 /// one machine (or earlier) can be planned, reviewed or applied later.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

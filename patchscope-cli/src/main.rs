@@ -138,6 +138,25 @@ struct ScanArgs {
     /// Exit with status 2 when a finding is at least this severe.
     #[arg(long, value_enum, default_value_t = SeverityArg::High)]
     fail_on: SeverityArg,
+    #[command(flatten)]
+    partial: PartialArgs,
+}
+
+#[derive(Args, Clone)]
+struct PartialArgs {
+    /// Accept incomplete research: do not exit with status 4 when a research
+    /// source (OSV.dev, CISA KEV, FIRST EPSS, endoflife.date) could not be
+    /// fully queried.
+    #[arg(long)]
+    allow_partial: bool,
+}
+
+/// Exit status when a research source could not be fully queried, so the
+/// absence of findings proves nothing.
+const EXIT_RESEARCH_INCOMPLETE: u8 = 4;
+
+fn research_exit(a: &Analysis, p: &PartialArgs) -> Option<ExitCode> {
+    (!p.allow_partial && !a.incomplete_sources().is_empty()).then(|| ExitCode::from(EXIT_RESEARCH_INCOMPLETE))
 }
 
 #[derive(Args, Clone)]
@@ -161,6 +180,8 @@ struct PlanArgs {
     research: ResearchArgs,
     #[command(flatten)]
     select: SelectArgs,
+    #[command(flatten)]
+    partial: PartialArgs,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, ValueEnum)]
@@ -380,6 +401,10 @@ fn print_system(ui: &Ui, r: &SystemReport) -> String {
     o
 }
 
+fn print_notes(a: &Analysis) -> String {
+    report::research_notes(a).iter().map(|n| format!("  ⚠ {n}\n")).collect()
+}
+
 fn print_analysis(ui: &Ui, a: &Analysis) -> String {
     let s = &a.summary;
     let mut o = format!(
@@ -395,6 +420,11 @@ fn print_analysis(ui: &Ui, a: &Analysis) -> String {
         "  {} updates available ({} security) · {} advisories matched · {} actively exploited\n\n",
         s.updates_available, s.security_updates, s.advisories, s.kev_advisories
     );
+    let notes = print_notes(a);
+    if !notes.is_empty() {
+        o += &notes;
+        o += "\n";
+    }
     for f in &a.findings {
         o += &format!("  {} {}\n", ui.sev(f.severity), f.title);
         if f.severity >= Severity::High {
@@ -480,11 +510,15 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             };
             write_out(a.discover.output.as_ref(), &text)?;
             let threshold: Severity = a.fail_on.into();
-            Ok(if s.analysis.findings.iter().any(|f| f.severity >= threshold) {
-                ExitCode::from(2)
-            } else {
-                ExitCode::SUCCESS
-            })
+            // Incomplete research comes first: the findings shown are real,
+            // but more may have been missed.
+            Ok(research_exit(&s.analysis, &a.partial).unwrap_or(
+                if s.analysis.findings.iter().any(|f| f.severity >= threshold) {
+                    ExitCode::from(2)
+                } else {
+                    ExitCode::SUCCESS
+                },
+            ))
         }
         Command::Plan(a) => {
             let policy = effective_policy(load_policy(cli.policy.as_ref())?, &a.select);
@@ -494,10 +528,10 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                 Format::Json => serde_json::to_string_pretty(&plan).map_err(|e| e.to_string())? + "\n",
                 Format::Markdown => report::markdown(&s.report, Some(&s.analysis), Some(&plan)),
                 Format::Html => report::html(&s.report, Some(&s.analysis), Some(&plan)),
-                Format::Text => print_plan(&ui, &plan),
+                Format::Text => print_notes(&s.analysis) + &print_plan(&ui, &plan),
             };
             write_out(a.discover.output.as_ref(), &text)?;
-            Ok(ExitCode::SUCCESS)
+            Ok(research_exit(&s.analysis, &a.partial).unwrap_or(ExitCode::SUCCESS))
         }
         Command::Apply(a) => {
             let policy = effective_policy(load_policy(cli.policy.as_ref())?, &a.select);

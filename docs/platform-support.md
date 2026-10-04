@@ -17,7 +17,7 @@ build from source.
 | APT | Debian, Ubuntu, derivatives | `dpkg-query` | `apt list --upgradable` | OSV (Debian, Ubuntu) + `-security` pocket | yes |
 | DNF | Fedora, RHEL, Rocky, Alma | `rpm -qa` | `dnf repoquery --upgrades` + `dnf updateinfo --security` | OSV (Rocky, Alma) + DNF security advisories | yes |
 | pacman | Arch and derivatives | `pacman -Q` | `checkupdates` (pacman-contrib) or `pacman -Qu` | no | yes |
-| Flatpak | Linux | `flatpak list --app` | `flatpak remote-ls --updates` | no | no |
+| Flatpak | Linux | `flatpak list` (apps and runtimes) | `flatpak remote-ls --updates` (apps and runtimes) | no | no |
 | Snap | Linux | `snap list` | `snap refresh --list` | no | yes |
 | npm (global) | all | `npm ls --global` | `npm outdated --global` | OSV (npm) | no |
 | rustup | all | `rustup toolchain list` | `rustup check` | no | no |
@@ -51,6 +51,10 @@ user installs; patchscope uses them when present.
 - winget tables are parsed by column position. If winget truncates a
   package id (very long ids, `…`), that update is reported but left out of
   the plan, because it cannot be installed reliably by id.
+- `winget upgrade` exiting with 0x8A15002B (no applicable update) means
+  no updates; any other non-zero exit (a source that could not be
+  searched, an agreement not accepted, no network) is reported as
+  "could not be fully queried", not as zero updates.
 - The Windows Update search can take several minutes.
 
 ### Linux
@@ -65,6 +69,11 @@ user installs; patchscope uses them when present.
   versions without syncing the system database; without it patchscope
   falls back to `pacman -Qu`.
 - Ubuntu phased updates are included when you explicitly select an update.
+- Flatpak runtimes (`org.freedesktop.Platform`, `org.gnome.Platform`,
+  `org.kde.Platform` and their extensions) are listed and updated
+  alongside apps: they carry the libraries (openssl, webkitgtk, ffmpeg)
+  the apps use. A runtime installed in several branches is one update;
+  `flatpak update NAME` updates every installed branch.
 
 ## Tested environments
 

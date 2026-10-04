@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 pub trait HttpClient: Send + Sync {
     fn get(&self, url: &str) -> Result<Vec<u8>, String>;
@@ -108,12 +108,16 @@ fn fnv1a(parts: &[&str]) -> String {
 }
 
 /// Caches responses on disk. Fresh entries are served without a request;
-/// in offline mode any cached entry is served and nothing is fetched.
+/// in offline mode any cached entry is served and nothing is fetched, and
+/// the age of the oldest entry served is kept for the report.
 pub struct CachedHttp<'a> {
     inner: &'a dyn HttpClient,
     dir: Option<PathBuf>,
     ttl: Duration,
     offline: bool,
+    /// Offline: when the oldest entry served since the last
+    /// [`CachedHttp::take_offline_as_of`] was written.
+    oldest_served: Mutex<Option<SystemTime>>,
 }
 
 impl<'a> CachedHttp<'a> {
@@ -126,18 +130,38 @@ impl<'a> CachedHttp<'a> {
             dir,
             ttl,
             offline,
+            oldest_served: Mutex::new(None),
         }
+    }
+
+    /// Offline only: the Unix time of the oldest cached response served
+    /// since the last call (None online, or when nothing was served).
+    pub fn take_offline_as_of(&self) -> Option<u64> {
+        self.oldest_served
+            .lock()
+            .expect("lock")
+            .take()
+            .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+            .map(|d| d.as_secs())
     }
 
     fn cached(&self, key: &str) -> Option<Vec<u8>> {
         let path = self.dir.as_ref()?.join(key);
         let meta = std::fs::metadata(&path).ok()?;
-        let fresh = meta
-            .modified()
-            .ok()
+        let modified = meta.modified().ok();
+        let fresh = modified
             .and_then(|m| m.elapsed().ok())
             .is_some_and(|age| age < self.ttl);
-        (fresh || self.offline).then(|| std::fs::read(&path).ok()).flatten()
+        let body = (fresh || self.offline).then(|| std::fs::read(&path).ok()).flatten()?;
+        if self.offline
+            && let Some(m) = modified
+        {
+            let mut oldest = self.oldest_served.lock().expect("lock");
+            if oldest.is_none_or(|o| m < o) {
+                *oldest = Some(m);
+            }
+        }
+        Some(body)
     }
 
     fn store(&self, key: &str, body: &[u8]) {
@@ -179,6 +203,8 @@ pub struct FakeHttp {
     routes: Vec<(String, Result<String, String>)>,
     pub requests: Mutex<Vec<String>>,
     posts: HashMap<String, String>,
+    /// (url, text the body must contain, answer), checked before `posts`.
+    posts_when: Vec<(String, String, Result<String, String>)>,
 }
 
 impl FakeHttp {
@@ -200,6 +226,19 @@ impl FakeHttp {
         self.posts.insert(url.to_string(), body.to_string());
         self
     }
+    /// Answer a POST to `url` whose body contains `needle` with `body`
+    /// (first match wins; checked before [`FakeHttp::post_route`]).
+    pub fn post_route_when(mut self, url: &str, needle: &str, body: &str) -> Self {
+        self.posts_when
+            .push((url.to_string(), needle.to_string(), Ok(body.to_string())));
+        self
+    }
+    /// Fail a POST to `url` whose body contains `needle`.
+    pub fn post_fail_when(mut self, url: &str, needle: &str, err: &str) -> Self {
+        self.posts_when
+            .push((url.to_string(), needle.to_string(), Err(err.to_string())));
+        self
+    }
     pub fn request_count(&self) -> usize {
         self.requests.lock().expect("lock").len()
     }
@@ -217,6 +256,13 @@ impl HttpClient for FakeHttp {
     }
     fn post_json(&self, url: &str, body: &str) -> Result<Vec<u8>, String> {
         self.requests.lock().expect("lock").push(format!("POST {url} {body}"));
+        if let Some((_, _, r)) = self
+            .posts_when
+            .iter()
+            .find(|(u, n, _)| u == url && body.contains(n.as_str()))
+        {
+            return r.clone().map(String::into_bytes);
+        }
         self.posts
             .get(url)
             .map(|b| b.clone().into_bytes())
@@ -246,6 +292,10 @@ mod tests {
         );
         assert!(off.get("https://x/b").is_err());
         assert_eq!(empty.request_count(), 0, "offline never fetches");
+        let as_of = off.take_offline_as_of().expect("offline remembers how old its data is");
+        assert!(as_of <= crate::util::unix_now() && as_of + 60 > crate::util::unix_now());
+        assert_eq!(off.take_offline_as_of(), None, "taken");
+        assert_eq!(c.take_offline_as_of(), None, "online: not tracked");
     }
 
     #[test]

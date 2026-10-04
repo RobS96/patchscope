@@ -132,34 +132,60 @@ pub fn analyze(report: &SystemReport, http: &dyn HttpClient, opts: &AnalyzeOptio
         })
         .collect();
 
+    // Offline, each source's detail says how old its cached data is.
+    let stamp = |detail: String| match http.take_offline_as_of() {
+        Some(t) => format!("{detail}; offline, data as of {}", util::rfc3339(t)),
+        None => detail,
+    };
+
     let mut advisories: Vec<Vec<Advisory>> = vec![Vec::new(); subjects.len()];
     if !subjects.is_empty() {
         progress(&format!("Checking {} packages against OSV.dev…", subjects.len()));
         let queries: Vec<osv::Query> = subjects.iter().map(|s| s.query.clone()).collect();
         match osv::query_batch(&http, &queries) {
-            Ok(ids) => {
-                let total: usize = ids.iter().map(Vec::len).sum();
+            Ok(batch) => {
+                let total: usize = batch.ids.iter().map(Vec::len).sum();
                 progress(&format!("Fetching details for {total} advisories…"));
-                advisories = fetch_details(&http, &subjects, &ids, opts.max_advisory_details);
+                let details = fetch_details(&http, &subjects, &batch.ids, opts.max_advisory_details);
+                advisories = details.advisories;
                 let skipped = total.saturating_sub(opts.max_advisory_details);
+                let mut detail = format!(
+                    "{} packages checked, {total} advisories matched{}",
+                    subjects.len(),
+                    if skipped > 0 {
+                        format!(
+                            " ({skipped} listed by id only, over the limit of {} fetched in full)",
+                            opts.max_advisory_details
+                        )
+                    } else {
+                        String::new()
+                    }
+                );
+                // A query whose later pages were lost, or an advisory whose
+                // record failed to load (so it has no severity or CVE alias
+                // for KEV/EPSS), means this research is incomplete.
+                if !batch.incomplete.is_empty() {
+                    detail.push_str(&format!("; results incomplete for {}", first_few(&batch.incomplete, 3)));
+                }
+                if details.failed > 0 {
+                    detail.push_str(&format!(
+                        "; {} advisory record{} could not be fetched and {} listed by id only, without severity or KEV/EPSS matching ({})",
+                        details.failed,
+                        if details.failed == 1 { "" } else { "s" },
+                        if details.failed == 1 { "is" } else { "are" },
+                        details.first_error.unwrap_or_default()
+                    ));
+                }
                 sources.push(SourceStatus {
                     name: "OSV.dev".into(),
-                    ok: true,
-                    detail: format!(
-                        "{} packages checked, {total} advisories matched{}",
-                        subjects.len(),
-                        if skipped > 0 {
-                            format!(" ({skipped} listed by id only)")
-                        } else {
-                            String::new()
-                        }
-                    ),
+                    ok: batch.incomplete.is_empty() && details.failed == 0,
+                    detail: stamp(detail),
                 });
             }
             Err(e) => sources.push(SourceStatus {
                 name: "OSV.dev".into(),
                 ok: false,
-                detail: e,
+                detail: stamp(e),
             }),
         }
     }
@@ -205,17 +231,22 @@ pub fn analyze(report: &SystemReport, http: &dyn HttpClient, opts: &AnalyzeOptio
                 sources.push(SourceStatus {
                     name: "CISA KEV".into(),
                     ok: true,
-                    detail: format!("catalogue {}: {hits} matches", k.version),
+                    detail: stamp(format!("catalogue {}: {hits} matches", k.version)),
                 });
             }
             Err(e) => sources.push(SourceStatus {
                 name: "CISA KEV".into(),
                 ok: false,
-                detail: e,
+                detail: stamp(e),
             }),
         }
         progress("Fetching EPSS exploit-probability scores…");
-        let capped: Vec<String> = all_cves.iter().take(2000).cloned().collect();
+        // Newest first: when there are more CVEs than the limit, the oldest
+        // (whose exploitation history is best known) are left out.
+        let mut capped = all_cves.clone();
+        capped.sort_by_key(|c| std::cmp::Reverse(cve_order(c)));
+        let dropped = capped.len().saturating_sub(MAX_EPSS_CVES);
+        capped.truncate(MAX_EPSS_CVES);
         match epss::fetch(&http, &capped) {
             Ok(scores) => {
                 for a in advisories.iter_mut().flatten() {
@@ -236,13 +267,22 @@ pub fn analyze(report: &SystemReport, http: &dyn HttpClient, opts: &AnalyzeOptio
                 sources.push(SourceStatus {
                     name: "FIRST EPSS".into(),
                     ok: true,
-                    detail: format!("{} of {} CVEs scored", scores.len(), capped.len()),
+                    detail: stamp(format!(
+                        "{} of {} CVEs scored{}",
+                        scores.len(),
+                        capped.len(),
+                        if dropped > 0 {
+                            format!("; {dropped} not sent (the oldest, over the limit of {MAX_EPSS_CVES})")
+                        } else {
+                            String::new()
+                        }
+                    )),
                 });
             }
             Err(e) => sources.push(SourceStatus {
                 name: "FIRST EPSS".into(),
                 ok: false,
-                detail: e,
+                detail: stamp(e),
             }),
         }
     }
@@ -302,11 +342,11 @@ pub fn analyze(report: &SystemReport, http: &dyn HttpClient, opts: &AnalyzeOptio
         sources.push(SourceStatus {
             name: "endoflife.date".into(),
             ok: eol_err.is_empty(),
-            detail: match (eol_ok.is_empty(), eol_err.is_empty()) {
+            detail: stamp(match (eol_ok.is_empty(), eol_err.is_empty()) {
                 (_, true) => format!("checked {}", eol_ok.join(", ")),
                 (true, false) => format!("failed: {}", eol_err.join("; ")),
                 (false, false) => format!("checked {}; failed: {}", eol_ok.join(", "), eol_err.join("; ")),
-            },
+            }),
         });
     }
 
@@ -326,6 +366,27 @@ pub fn analyze(report: &SystemReport, http: &dyn HttpClient, opts: &AnalyzeOptio
             rationale: format!(
                 "Results for this source may be incomplete: {}",
                 m.error.as_deref().unwrap_or_default()
+            ),
+            advisories: Vec::new(),
+            remediation: None,
+            risk_score: 1.0,
+            references: Vec::new(),
+        });
+    }
+
+    // ---- research sources that could not be (fully) queried
+    for src in sources.iter().filter(|s| !s.ok) {
+        findings.push(Finding {
+            id: format!("research:{}", src.name),
+            severity: Severity::Info,
+            category: Category::Outdated,
+            title: format!("Research incomplete: {}", src.name),
+            manager: None,
+            subject: src.name.clone(),
+            installed_version: None,
+            rationale: format!(
+                "{} could not be fully queried, so findings that depend on it may be missing or rated too low: {}",
+                src.name, src.detail
             ),
             advisories: Vec::new(),
             remediation: None,
@@ -369,15 +430,49 @@ pub fn analyze(report: &SystemReport, http: &dyn HttpClient, opts: &AnalyzeOptio
     }
 }
 
+/// Most CVEs sent to EPSS per scan.
+const MAX_EPSS_CVES: usize = 2000;
+
+/// `CVE-2024-12345` → (2024, 12345), for newest-first ordering.
+fn cve_order(cve: &str) -> (u32, u64) {
+    let mut parts = cve.trim_start_matches("CVE-").splitn(2, '-');
+    let year = parts.next().and_then(|y| y.parse().ok()).unwrap_or(0);
+    let num = parts.next().and_then(|n| n.parse().ok()).unwrap_or(0);
+    (year, num)
+}
+
+/// The first `n` items, then how many more.
+fn first_few(items: &[String], n: usize) -> String {
+    let mut s = items.iter().take(n).cloned().collect::<Vec<_>>().join("; ");
+    if items.len() > n {
+        s.push_str(&format!(" and {} more", items.len() - n));
+    }
+    s
+}
+
+struct Details {
+    advisories: Vec<Vec<Advisory>>,
+    /// Records that should have been fetched in full but could not be.
+    failed: usize,
+    first_error: Option<String>,
+}
+
 /// Fetch advisory records in parallel (8 at a time), at most `cap` in full.
-fn fetch_details(http: &dyn HttpClient, subjects: &[Subject], ids: &[Vec<String>], cap: usize) -> Vec<Vec<Advisory>> {
+/// The cap is shared round-robin across packages (every package's first
+/// advisory, then every package's second, …), so one package with hundreds
+/// of advisories (a kernel) cannot use it all up.
+fn fetch_details(http: &dyn HttpClient, subjects: &[Subject], ids: &[Vec<String>], cap: usize) -> Details {
     let mut jobs: Vec<(usize, String)> = Vec::new();
-    for (i, list) in ids.iter().enumerate() {
-        for id in list {
-            jobs.push((i, id.clone()));
+    let longest = ids.iter().map(Vec::len).max().unwrap_or(0);
+    for k in 0..longest {
+        for (i, list) in ids.iter().enumerate() {
+            if let Some(id) = list.get(k) {
+                jobs.push((i, id.clone()));
+            }
         }
     }
     let results: Mutex<Vec<Vec<Advisory>>> = Mutex::new(vec![Vec::new(); subjects.len()]);
+    let failures: Mutex<(usize, Option<String>)> = Mutex::new((0, None));
     let next = Mutex::new(0usize);
     std::thread::scope(|s| {
         for _ in 0..8 {
@@ -392,8 +487,12 @@ fn fetch_details(http: &dyn HttpClient, subjects: &[Subject], ids: &[Vec<String>
                     let Some((i, id)) = jobs.get(n) else { break };
                     let subj = &subjects[*i];
                     let adv = if n < cap {
-                        osv::fetch_advisory(http, id, &subj.query.ecosystem, &subj.query.name)
-                            .unwrap_or_else(|_| osv::bare_advisory(id))
+                        osv::fetch_advisory(http, id, &subj.query.ecosystem, &subj.query.name).unwrap_or_else(|e| {
+                            let mut f = failures.lock().expect("lock");
+                            f.0 += 1;
+                            f.1.get_or_insert(e);
+                            osv::bare_advisory(id)
+                        })
                     } else {
                         osv::bare_advisory(id)
                     };
@@ -406,7 +505,12 @@ fn fetch_details(http: &dyn HttpClient, subjects: &[Subject], ids: &[Vec<String>
     for list in &mut out {
         list.sort_by(|a, b| advisory_risk(b).total_cmp(&advisory_risk(a)).then(a.id.cmp(&b.id)));
     }
-    out
+    let (failed, first_error) = failures.into_inner().expect("lock");
+    Details {
+        advisories: out,
+        failed,
+        first_error,
+    }
 }
 
 fn vulnerability_finding(report: &SystemReport, s: &Subject, advs: Vec<Advisory>) -> Finding {
@@ -831,4 +935,38 @@ pub fn findings_by_update(analysis: &Analysis) -> HashMap<String, Vec<&Finding>>
         }
     }
     m
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::research::http::FakeHttp;
+
+    fn subject(name: &str) -> Subject {
+        Subject {
+            query: osv::Query {
+                ecosystem: "npm".into(),
+                name: name.into(),
+                version: "1.0.0".into(),
+            },
+            manager: ManagerId::NpmGlobal,
+            binaries: vec![name.into()],
+        }
+    }
+
+    #[test]
+    fn detail_cap_is_shared_across_packages() {
+        let http = FakeHttp::new().route(
+            "https://api.osv.dev/v1/vulns/",
+            r#"{"id":"X","aliases":["CVE-2024-1"]}"#,
+        );
+        let subjects = [subject("a"), subject("b")];
+        let ids: Vec<Vec<String>> = vec![vec!["A1".into(), "A2".into(), "A3".into()], vec!["B1".into()]];
+        let _ = fetch_details(&http, &subjects, &ids, 2);
+        let sent = http.requests.lock().unwrap().clone();
+        assert!(
+            sent.iter().any(|r| r.ends_with("/vulns/B1")),
+            "b's only advisory is fetched although a sorts first and has more: {sent:?}"
+        );
+    }
 }
