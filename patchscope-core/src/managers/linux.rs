@@ -6,6 +6,16 @@ use crate::exec::{CommandRunner, CommandSpec};
 use crate::model::{AvailableUpdate, ManagerId, OsFamily, Package, UpdateKind};
 use std::collections::HashSet;
 
+// Elevated commands name their program by absolute path: `sudo` without a
+// `secure_path`, `pkexec` and `env` would otherwise look a bare name up on
+// the caller's PATH, which can hold user-writable directories. These are
+// the paths every mainstream distribution installs the tools at (on
+// merged-/usr systems /bin and /sbin are links into /usr/bin).
+const APT_GET: &str = "/usr/bin/apt-get";
+const DNF: &str = "/usr/bin/dnf";
+const PACMAN: &str = "/usr/bin/pacman";
+const SNAP: &str = "/usr/bin/snap";
+
 fn c_locale(spec: CommandSpec) -> CommandSpec {
     spec.env("LC_ALL", "C")
 }
@@ -149,7 +159,7 @@ impl Manager for Apt {
     }
     fn refresh_command(&self) -> Option<CommandSpec> {
         Some(
-            c_locale(CommandSpec::new("apt-get", &["update"]))
+            c_locale(CommandSpec::new(APT_GET, &["update"]))
                 .timeout(mins(10))
                 .elevated(),
         )
@@ -158,7 +168,7 @@ impl Manager for Apt {
         // --only-upgrade: never installs a package that is not there already.
         // Phased updates are included: the person chose this update.
         c_locale(CommandSpec::new(
-            "apt-get",
+            APT_GET,
             &[
                 "install",
                 "--only-upgrade",
@@ -341,13 +351,13 @@ impl Manager for Dnf {
     }
     fn refresh_command(&self) -> Option<CommandSpec> {
         Some(
-            c_locale(CommandSpec::new("dnf", &["-q", "makecache"]))
+            c_locale(CommandSpec::new(DNF, &["-q", "makecache"]))
                 .timeout(mins(10))
                 .elevated(),
         )
     }
     fn install_command(&self, u: &AvailableUpdate) -> CommandSpec {
-        c_locale(CommandSpec::new("dnf", &["upgrade", "-y", &u.id]))
+        c_locale(CommandSpec::new(DNF, &["upgrade", "-y", &u.id]))
             .timeout(mins(60))
             .elevated()
     }
@@ -434,7 +444,7 @@ impl Manager for Pacman {
         Ok(parse_pacman_qu(&text))
     }
     fn install_command(&self, _u: &AvailableUpdate) -> CommandSpec {
-        c_locale(CommandSpec::new("pacman", &["-Syu", "--noconfirm"]))
+        c_locale(CommandSpec::new(PACMAN, &["-Syu", "--noconfirm"]))
             .timeout(mins(90))
             .elevated()
     }
@@ -581,9 +591,7 @@ impl Manager for Snap {
             .collect())
     }
     fn install_command(&self, u: &AvailableUpdate) -> CommandSpec {
-        CommandSpec::new("snap", &["refresh", &u.id])
-            .timeout(mins(60))
-            .elevated()
+        CommandSpec::new(SNAP, &["refresh", &u.id]).timeout(mins(60)).elevated()
     }
 }
 
@@ -640,6 +648,7 @@ mod tests {
             ]
         );
         assert!(cmd.needs_elevation);
+        assert_eq!(cmd.program, "/usr/bin/apt-get", "elevated: never looked up on PATH");
         assert!(cmd.env.contains(&("DEBIAN_FRONTEND".into(), "noninteractive".into())));
     }
 

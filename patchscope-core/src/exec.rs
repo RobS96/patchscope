@@ -458,11 +458,29 @@ impl Elevation {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum ElevateError {
+    #[error(
+        "refusing to run `{0}` with administrator rights: the program must be named by absolute path, not looked up on PATH"
+    )]
+    RelativeProgram(String),
+}
+
 /// Wrap `spec` so it runs elevated. Commands that do not need elevation,
 /// and [`Elevation::None`], pass through unchanged.
-pub fn elevate(spec: &CommandSpec, how: Elevation) -> CommandSpec {
-    if !spec.needs_elevation {
-        return spec.clone();
+///
+/// A wrapped program must be an absolute path: `sudo` without `secure_path`
+/// (the macOS default), `pkexec` and `env` look a bare name up on the
+/// caller's PATH, where a user-writable directory would let user-level code
+/// run as root.
+pub fn elevate(spec: &CommandSpec, how: Elevation) -> Result<CommandSpec, ElevateError> {
+    if !spec.needs_elevation || how == Elevation::None {
+        return Ok(spec.clone());
+    }
+    // Every wrapper is a Unix program, so absolute means a leading `/`
+    // (`Path::is_absolute` would say no to it on Windows).
+    if !spec.program.starts_with('/') {
+        return Err(ElevateError::RelativeProgram(spec.program.clone()));
     }
     // Environment variables cross the privilege boundary through
     // `env K=V`, since sudo and pkexec reset the environment.
@@ -486,7 +504,7 @@ pub fn elevate(spec: &CommandSpec, how: Elevation) -> CommandSpec {
         needs_elevation: false,
         interactive: how == Elevation::Sudo,
     };
-    match how {
+    Ok(match how {
         Elevation::None => spec.clone(),
         // Absolute paths: a directory earlier on PATH must not be able to
         // stand in for the program that asks for the password.
@@ -508,23 +526,38 @@ pub fn elevate(spec: &CommandSpec, how: Elevation) -> CommandSpec {
                 interactive: false,
             }
         }
-    }
+    })
 }
 
 /// Whether this process already runs as root/Administrator.
 pub fn is_elevated(runner: &dyn CommandRunner) -> bool {
     if cfg!(windows) {
-        // `net session` succeeds only for an elevated Administrator.
-        runner
-            .run(&CommandSpec::new("net", &["session"]).timeout(Duration::from_secs(10)))
-            .map(|o| o.success())
-            .unwrap_or(false)
+        is_elevated_windows(runner)
     } else {
         runner
             .run(&CommandSpec::new("id", &["-u"]).timeout(Duration::from_secs(10)))
             .map(|o| o.success() && o.stdout.trim() == "0")
             .unwrap_or(false)
     }
+}
+
+/// `whoami.exe` by absolute path, so nothing earlier on PATH can answer.
+fn whoami_program() -> String {
+    let root = std::env::var_os("SystemRoot").map_or_else(|| PathBuf::from(r"C:\Windows"), PathBuf::from);
+    root.join("System32").join("whoami.exe").to_string_lossy().into_owned()
+}
+
+/// Read the process token's integrity level: High (`S-1-16-12288`) or
+/// System (`S-1-16-16384`) means elevated. Unlike `net session`, this does
+/// not depend on the Server service running, and SIDs are not translated.
+fn is_elevated_windows(runner: &dyn CommandRunner) -> bool {
+    let spec = CommandSpec::new(&whoami_program(), &["/groups", "/fo", "csv", "/nh"]).timeout(Duration::from_secs(10));
+    runner.run(&spec).is_ok_and(|o| {
+        o.success()
+            && o.stdout
+                .split(|c: char| c == ',' || c == '"' || c.is_whitespace())
+                .any(|t| t == "S-1-16-12288" || t == "S-1-16-16384")
+    })
 }
 
 #[cfg(test)]
@@ -543,12 +576,12 @@ mod tests {
     #[test]
     fn elevation_wraps_only_privileged_commands() {
         let plain = CommandSpec::new("brew", &["upgrade", "git"]);
-        assert_eq!(elevate(&plain, Elevation::Sudo), plain);
+        assert_eq!(elevate(&plain, Elevation::Sudo).unwrap(), plain);
 
-        let apt = CommandSpec::new("apt-get", &["install", "--only-upgrade", "-y", "curl"])
+        let apt = CommandSpec::new("/usr/bin/apt-get", &["install", "--only-upgrade", "-y", "curl"])
             .env("DEBIAN_FRONTEND", "noninteractive")
             .elevated();
-        let s = elevate(&apt, Elevation::Sudo);
+        let s = elevate(&apt, Elevation::Sudo).unwrap();
         assert_eq!(s.program, "/usr/bin/sudo");
         assert_eq!(
             s.args,
@@ -556,7 +589,7 @@ mod tests {
                 "--",
                 "/usr/bin/env",
                 "DEBIAN_FRONTEND=noninteractive",
-                "apt-get",
+                "/usr/bin/apt-get",
                 "install",
                 "--only-upgrade",
                 "-y",
@@ -564,22 +597,82 @@ mod tests {
             ]
         );
         assert!(!s.needs_elevation);
-        assert_eq!(elevate(&apt, Elevation::SudoNonInteractive).args[..2], ["-n", "--"]);
-        assert_eq!(elevate(&apt, Elevation::Pkexec).program, "/usr/bin/pkexec");
+        assert_eq!(
+            elevate(&apt, Elevation::SudoNonInteractive).unwrap().args[..2],
+            ["-n", "--"]
+        );
+        assert_eq!(elevate(&apt, Elevation::Pkexec).unwrap().program, "/usr/bin/pkexec");
+    }
+
+    #[test]
+    fn elevation_refuses_programs_looked_up_on_path() {
+        // sudo without secure_path, pkexec and env resolve a bare name on the
+        // caller's PATH: a user-writable directory there would run as root.
+        let bare = CommandSpec::new("softwareupdate", &["--install", "x"]).elevated();
+        for how in [
+            Elevation::Sudo,
+            Elevation::SudoNonInteractive,
+            Elevation::Pkexec,
+            Elevation::MacosAdminPrompt,
+        ] {
+            let e = elevate(&bare, how).unwrap_err();
+            assert!(e.to_string().contains("absolute path"), "{e}");
+        }
+        let rel = CommandSpec::new("bin/apt-get", &["update"]).elevated();
+        assert!(elevate(&rel, Elevation::Sudo).is_err());
+        // No wrapper, nothing resolved through one: unchanged (Windows).
+        assert_eq!(elevate(&bare, Elevation::None).unwrap(), bare);
+        // Unprivileged commands are never wrapped, so never refused.
+        let plain = CommandSpec::new("brew", &["upgrade", "git"]);
+        assert_eq!(elevate(&plain, Elevation::Sudo).unwrap(), plain);
     }
 
     #[test]
     fn macos_admin_prompt_escapes_for_applescript() {
-        let spec = CommandSpec::new("softwareupdate", &["--install", "macOS Tahoe 26.7.2-25H200"]).elevated();
-        let s = elevate(&spec, Elevation::MacosAdminPrompt);
+        let spec = CommandSpec::new("/usr/sbin/softwareupdate", &["--install", "macOS Tahoe 26.7.2-25H200"]).elevated();
+        let s = elevate(&spec, Elevation::MacosAdminPrompt).unwrap();
         assert_eq!(s.program, "/usr/bin/osascript");
         assert_eq!(
             s.args[1],
-            "do shell script \"softwareupdate --install 'macOS Tahoe 26.7.2-25H200'\" with administrator privileges"
+            "do shell script \"/usr/sbin/softwareupdate --install 'macOS Tahoe 26.7.2-25H200'\" with administrator privileges"
         );
-        let nasty = CommandSpec::new("x", &["a\"b\\c"]).elevated();
-        let s = elevate(&nasty, Elevation::MacosAdminPrompt);
+        let nasty = CommandSpec::new("/x", &["a\"b\\c"]).elevated();
+        let s = elevate(&nasty, Elevation::MacosAdminPrompt).unwrap();
         assert!(s.args[1].contains(r#"'a\"b\\c'"#), "{}", s.args[1]);
+    }
+
+    #[test]
+    fn windows_elevation_is_read_from_the_token() {
+        // `whoami /groups /fo csv /nh`: the integrity level is a group. High
+        // (S-1-16-12288) or System (S-1-16-16384) means elevated; this works
+        // whether or not the Server service (`net session`) is running.
+        let whoami = format!("{} /groups /fo csv /nh", whoami_program());
+        let groups = |label: &str, sid: &str| {
+            format!(
+                "\"Everyone\",\"Well-known group\",\"S-1-1-0\",\"Mandatory group, Enabled by default, Enabled group\"\r\n\
+                 \"BUILTIN\\Administrators\",\"Alias\",\"S-1-5-32-544\",\"Mandatory group, Enabled by default, Enabled group, Group owner\"\r\n\
+                 \"Mandatory Label\\{label} Mandatory Level\",\"Label\",\"{sid}\",\"\"\r\n"
+            )
+        };
+        let elevated = |out: CommandOutput| {
+            // `net session` fails: the Server service is disabled.
+            let r = FakeRunner::new()
+                .respond("net session", CommandOutput::with_status(2, "", "System error 1726"))
+                .respond(&whoami, out);
+            is_elevated_windows(&r)
+        };
+        assert!(elevated(CommandOutput::ok(&groups("High", "S-1-16-12288"))));
+        assert!(elevated(CommandOutput::ok(&groups("System", "S-1-16-16384"))));
+        // An administrator's unelevated (filtered) token is Medium.
+        assert!(!elevated(CommandOutput::ok(&groups("Medium", "S-1-16-8192"))));
+        // A SID that merely starts with the High one is not it.
+        assert!(!elevated(CommandOutput::ok(&groups("Odd", "S-1-16-122880"))));
+        assert!(!elevated(CommandOutput::with_status(
+            1,
+            &groups("High", "S-1-16-12288"),
+            ""
+        )));
+        assert!(!elevated(CommandOutput::ok("")));
     }
 
     #[test]

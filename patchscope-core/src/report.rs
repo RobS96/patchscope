@@ -181,6 +181,9 @@ pub fn apply_markdown(r: &ApplyReport) -> String {
             md_escape(&x.message)
         );
     }
+    for w in &r.warnings {
+        let _ = writeln!(o, "\n**Warning:** {}", md_escape(w));
+    }
     o
 }
 

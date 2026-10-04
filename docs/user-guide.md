@@ -191,8 +191,13 @@ audit log says what.
   failed. Its own error is in the finding and in *Discovery notes*. On a
   Mac, `softwareupdate` can take minutes on a slow network; it is given
   five.
-- **"another patchscope apply is running":** wait, or delete `apply.lock`
-  if no patchscope is running (a lock older than six hours is ignored).
+- **"another patchscope apply is running":** another patchscope is
+  installing right now; wait for it to finish. The lock is released when
+  that run exits, however it exits, so there is nothing to delete.
+- **"audit log …: Permission denied":** patchscope does not install
+  without recording what it does. This usually means an earlier run under
+  `sudo` left `audit.jsonl` (or its folder) owned by root; give it back to
+  your user (`sudo chown -R "$USER" <folder>`).
 - **Research source ✗ / certificate errors behind a corporate proxy:**
   patchscope trusts the operating system's certificate store, or the PEM
   bundle named by `SSL_CERT_FILE` if that is set. `--offline` uses the

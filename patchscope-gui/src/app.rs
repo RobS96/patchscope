@@ -53,6 +53,12 @@ enum Msg {
     Applied(Result<ApplyReport, String>),
 }
 
+fn policy_error_text(e: &str) -> String {
+    format!(
+        "The policy file could not be loaded, so installing is off (dry runs still work). Fix it in Settings and save. {e}"
+    )
+}
+
 pub fn severity_color(s: Severity, dark: bool) -> Color32 {
     match (s, dark) {
         (Severity::Critical, false) => Color32::from_rgb(185, 28, 28),
@@ -78,6 +84,9 @@ pub struct App {
     policy_path: Option<PathBuf>,
     policy_text: String,
     policy_msg: Option<(bool, String)>,
+    /// The policy file did not load. Like the CLI, the app then installs
+    /// nothing (dry runs still work) until a valid policy is saved.
+    policy_error: Option<String>,
     pub settings: ScanSettings,
     pub elevation: Elevation,
     pub dry_run: bool,
@@ -97,16 +106,16 @@ pub struct App {
 
 impl App {
     pub fn new(backend: Arc<dyn Backend>, policy_path: Option<PathBuf>) -> Self {
-        let (policy, policy_msg) = match &policy_path {
+        let (policy, policy_error) = match &policy_path {
             Some(p) => match Policy::load(p) {
                 Ok(pol) => (pol, None),
-                Err(e) => (
-                    Policy::default(),
-                    Some((false, format!("{e}; using the default policy"))),
-                ),
+                Err(e) => (Policy::default(), Some(e.to_string())),
             },
             None => (Policy::default(), None),
         };
+        let policy_msg = policy_error
+            .as_ref()
+            .map(|e| (false, format!("{e}; installing is off until a valid policy is saved")));
         let export_dir =
             directories::UserDirs::new().and_then(|u| u.download_dir().or(u.document_dir()).map(|d| d.to_path_buf()));
         App {
@@ -119,6 +128,7 @@ impl App {
             policy,
             policy_path,
             policy_msg,
+            policy_error,
             settings: ScanSettings::default(),
             elevation: Elevation::default_for(true),
             dry_run: false,
@@ -188,7 +198,7 @@ impl App {
         let (Some(plan), Some(scan)) = (self.selected_plan(), self.scan.as_ref()) else {
             return;
         };
-        if plan.is_empty() || self.busy.is_some() {
+        if plan.is_empty() || self.busy.is_some() || (!self.dry_run && self.policy_error.is_some()) {
             return;
         }
         self.confirm_open = false;
@@ -230,7 +240,11 @@ impl App {
     fn rebuild_plan(&mut self) {
         if let Some(scan) = &self.scan {
             let plan = build_plan(&scan.report, &scan.analysis, &self.policy, &Selection::All);
-            self.selected = plan.actions.iter().map(|a| a.key.clone()).collect();
+            self.selected = if self.policy_error.is_some() {
+                BTreeSet::new()
+            } else {
+                plan.actions.iter().map(|a| a.key.clone()).collect()
+            };
             self.plan = Some(plan);
         }
     }
@@ -619,6 +633,9 @@ which updates to install; nothing changes until you confirm.",
             return;
         };
         let dark = ui.visuals().dark_mode;
+        if let Some(e) = &self.policy_error {
+            ui.colored_label(severity_color(Severity::Critical, dark), policy_error_text(e));
+        }
         ui.label("Tick the updates to install. Commands run through the system's own package managers; nothing runs until you confirm.");
         ui.horizontal(|ui| {
             if ui.button("Select all").clicked() {
@@ -700,7 +717,7 @@ which updates to install; nothing changes until you confirm.",
             } else {
                 format!("Install selected ({n})")
             };
-            let enabled = n > 0 && self.busy.is_none();
+            let enabled = n > 0 && self.busy.is_none() && (self.dry_run || self.policy_error.is_none());
             if ui
                 .add_enabled(enabled, egui::Button::new(RichText::new(label).strong()))
                 .clicked()
@@ -732,6 +749,12 @@ which updates to install; nothing changes until you confirm.",
                 }
             });
             ui.add_space(6.0);
+            if let Some(e) = &self.policy_error {
+                ui.colored_label(
+                    severity_color(Severity::Critical, ui.visuals().dark_mode),
+                    policy_error_text(e),
+                );
+            }
             if plan.needs_elevation() && !self.dry_run {
                 ui.label("Your computer will ask for an administrator password.");
             }
@@ -744,7 +767,11 @@ which updates to install; nothing changes until you confirm.",
                     cancel = true;
                 }
                 let go_label = if self.dry_run { "Run dry run" } else { "Install now" };
-                if ui.button(RichText::new(go_label).strong()).clicked() {
+                let allowed = self.dry_run || self.policy_error.is_none();
+                if ui
+                    .add_enabled(allowed, egui::Button::new(RichText::new(go_label).strong()))
+                    .clicked()
+                {
                     go = true;
                 }
             });
@@ -779,6 +806,9 @@ which updates to install; nothing changes until you confirm.",
                     ui.end_row();
                 }
             });
+            for w in &r.warnings {
+                ui.colored_label(severity_color(Severity::High, dark), w);
+            }
             if r.restart_required() {
                 ui.label("Restart the computer to finish installing.");
             }
@@ -1039,6 +1069,7 @@ off unless allowed.",
                 match written {
                     Ok(m) => {
                         self.policy = p;
+                        self.policy_error = None;
                         self.policy_msg = Some((true, m));
                         self.rebuild_plan();
                     }

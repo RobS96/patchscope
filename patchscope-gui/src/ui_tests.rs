@@ -185,6 +185,7 @@ impl Backend for FakeBackend {
             finished_at: "f".into(),
             dry_run: opts.dry_run,
             results,
+            warnings: Vec::new(),
         })
     }
 }
@@ -339,6 +340,72 @@ fn policy_is_validated_before_saving() {
 }
 
 #[test]
+fn a_broken_policy_file_blocks_installing() {
+    // The CLI refuses to run with a malformed policy; the app must not fall
+    // back to the defaults and offer to install everything instead.
+    let dir = tempfile_dir();
+    std::fs::write(dir.path().join("patchscope.toml"), "[apply]\nallow_os_upgrade = true\n").unwrap();
+    let backend = Arc::new(FakeBackend::default());
+    let mut h = harness(Arc::clone(&backend), dir.path());
+    h.run_steps(2);
+    h.get_by_label("Scan this computer").click();
+    h.run_steps(1);
+    settle(&mut h);
+    assert!(h.state().selected.is_empty(), "nothing is pre-selected");
+
+    h.get_by_label("Updates  0").click();
+    h.run_steps(2);
+    h.get_by_label_contains("allow_os_upgrade");
+    h.get_by_label("Select all").click();
+    h.run_steps(2);
+    h.get_by_label("Install selected (2)").click();
+    h.run_steps(2);
+    assert!(!h.state().confirm_open, "Install is disabled");
+    // Even if the dialog is reached, Install does nothing.
+    h.state_mut().confirm_open = true;
+    h.run_steps(2);
+    assert!(
+        h.query_all_by_label_contains("allow_os_upgrade").count() >= 2,
+        "the error is in the dialog too"
+    );
+    h.get_by_label("Install now").click();
+    h.run_steps(2);
+    assert!(h.state().busy.is_none() && backend.applied.lock().unwrap().is_empty());
+    h.state_mut().confirm_open = false;
+    h.run_steps(2);
+
+    // A dry run is still allowed.
+    h.get_by_label("Dry run (show the commands, change nothing)").click();
+    h.run_steps(2);
+    h.get_by_label("Dry run selected (2)").click();
+    h.run_steps(2);
+    h.get_by_label("Run dry run").click();
+    h.run_steps(1);
+    settle(&mut h);
+    assert_eq!(
+        backend.applied.lock().unwrap().clone(),
+        vec![(
+            vec!["npm-global:minimist".to_string(), "npm-global:left-pad".to_string()],
+            true
+        )]
+    );
+
+    // Saving a valid policy clears the block.
+    {
+        let app = h.state_mut();
+        set_policy_text(app, "[apply]\n");
+        app.save_policy();
+        app.tab = Tab::Updates;
+        app.dry_run = false;
+    }
+    h.run_steps(2);
+    assert_eq!(h.state().selected.len(), 2);
+    h.get_by_label("Install selected (2)").click();
+    h.run_steps(2);
+    assert!(h.state().confirm_open);
+}
+
+#[test]
 fn every_tab_renders_with_and_without_a_scan() {
     let dir = tempfile_dir();
     let mut h = harness(Arc::new(FakeBackend::default()), dir.path());
@@ -403,9 +470,13 @@ struct TempDir(std::path::PathBuf);
 
 impl TempDir {
     fn new() -> Self {
+        // The clock alone can repeat between tests started together (macOS
+        // reports microseconds), so a counter keeps each directory apart.
+        static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         let p = std::env::temp_dir().join(format!(
-            "patchscope-gui-test-{}-{}",
+            "patchscope-gui-test-{}-{}-{}",
             std::process::id(),
+            N.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()

@@ -375,6 +375,97 @@ fn dry_run_changes_nothing() {
     );
 }
 
+/// An audit log path that cannot be opened: its parent is a file.
+fn unopenable_audit_log(dir: &std::path::Path) -> std::path::PathBuf {
+    std::fs::write(dir.join("not-a-directory"), "").unwrap();
+    dir.join("not-a-directory").join("audit.jsonl")
+}
+
+#[test]
+fn apply_refuses_to_start_without_its_audit_log() {
+    let runner = recorded_runner();
+    let report = inventory(&runner, &os_macos("26.7.1"));
+    let a = analyze(&report, &research_http(None), &opts(), &|_| {});
+    let plan = build_plan(&report, &a, &Policy::default(), &Selection::All);
+    let before = runner.calls().len();
+    let dir = tempfile::tempdir().unwrap();
+    let err = apply_plan(
+        &plan,
+        &report.os,
+        &runner,
+        &ApplyOptions {
+            dry_run: false,
+            elevation: Elevation::None,
+            verify: true,
+            audit_log: Some(unopenable_audit_log(dir.path())),
+            lock_dir: Some(dir.path().into()),
+            stop_on_failure: false,
+        },
+        &|_| {},
+    )
+    .expect_err("an apply that cannot be audited must not start");
+    assert!(err.to_string().contains("audit log"), "{err}");
+    assert_eq!(runner.calls().len(), before, "nothing ran");
+}
+
+#[test]
+fn a_dry_run_reports_an_audit_log_it_cannot_write() {
+    let runner = recorded_runner();
+    let report = inventory(&runner, &os_macos("26.7.1"));
+    let a = analyze(&report, &research_http(None), &opts(), &|_| {});
+    let plan = build_plan(&report, &a, &Policy::default(), &Selection::All);
+    let dir = tempfile::tempdir().unwrap();
+    let warned = std::sync::Mutex::new(Vec::new());
+    let r = apply_plan(
+        &plan,
+        &report.os,
+        &runner,
+        &ApplyOptions {
+            dry_run: true,
+            audit_log: Some(unopenable_audit_log(dir.path())),
+            lock_dir: Some(dir.path().into()),
+            ..Default::default()
+        },
+        &|e| {
+            if let ApplyEvent::Warning(w) = e {
+                warned.lock().unwrap().push(w.to_string());
+            }
+        },
+    )
+    .unwrap();
+    assert_eq!(r.warnings.len(), 1, "{:?}", r.warnings);
+    assert!(r.warnings[0].contains("audit log"), "{}", r.warnings[0]);
+    assert_eq!(*warned.lock().unwrap(), r.warnings, "shown as it happens too");
+}
+
+#[cfg(unix)]
+#[test]
+fn an_existing_audit_log_is_made_owner_only() {
+    use std::os::unix::fs::PermissionsExt;
+    let runner = recorded_runner();
+    let report = inventory(&runner, &os_macos("26.7.1"));
+    let a = analyze(&report, &research_http(None), &opts(), &|_| {});
+    let plan = build_plan(&report, &a, &Policy::default(), &Selection::All);
+    let dir = tempfile::tempdir().unwrap();
+    let audit = dir.path().join("audit.jsonl");
+    std::fs::write(&audit, "").unwrap();
+    std::fs::set_permissions(&audit, std::fs::Permissions::from_mode(0o644)).unwrap();
+    apply_plan(
+        &plan,
+        &report.os,
+        &runner,
+        &ApplyOptions {
+            dry_run: true,
+            audit_log: Some(audit.clone()),
+            lock_dir: Some(dir.path().into()),
+            ..Default::default()
+        },
+        &|_| {},
+    )
+    .unwrap();
+    assert_eq!(std::fs::metadata(&audit).unwrap().permissions().mode() & 0o777, 0o600);
+}
+
 #[test]
 fn apply_installs_verifies_and_audits() {
     let runner = recorded_runner();
@@ -421,7 +512,11 @@ fn apply_installs_verifies_and_audits() {
     );
     assert_eq!(events.lock().unwrap().len(), 3);
     assert!(!r.all_succeeded());
-    assert!(!dir.path().join("apply.lock").exists(), "the lock is released");
+    let lock = std::fs::File::options()
+        .write(true)
+        .open(dir.path().join("apply.lock"))
+        .unwrap();
+    assert!(lock.try_lock().is_ok(), "the lock is released");
 
     let log = std::fs::read_to_string(&audit).unwrap();
     assert!(log.lines().count() >= 3);
@@ -436,7 +531,7 @@ fn apply_installs_verifies_and_audits() {
 #[test]
 fn elevated_actions_use_the_chosen_method() {
     let runner = recorded_runner().respond(
-        "/usr/bin/sudo -n -- softwareupdate --install macOS Tahoe 26.7.2-25H210",
+        "/usr/bin/sudo -n -- /usr/sbin/softwareupdate --install macOS Tahoe 26.7.2-25H210",
         CommandOutput::ok("Installing…\nDone. Please restart.\n"),
     );
     let report = inventory(&runner, &os_macos("26.7.1"));
@@ -473,7 +568,7 @@ fn elevated_actions_use_the_chosen_method() {
             runner
                 .call_lines()
                 .iter()
-                .any(|l| l.starts_with("/usr/bin/sudo -n -- softwareupdate --install"))
+                .any(|l| l.starts_with("/usr/bin/sudo -n -- /usr/sbin/softwareupdate --install"))
         );
     }
 }
@@ -481,7 +576,9 @@ fn elevated_actions_use_the_chosen_method() {
 #[test]
 fn a_second_apply_is_refused_while_one_runs() {
     let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("apply.lock"), "pid=1").unwrap();
+    // Another patchscope holds the operating system's lock on the file.
+    let held = std::fs::File::create(dir.path().join("apply.lock")).unwrap();
+    held.try_lock().unwrap();
     let runner = recorded_runner();
     let report = inventory(&runner, &os_macos("26.7.1"));
     let a = analyze(&report, &research_http(None), &opts(), &|_| {});
@@ -539,7 +636,7 @@ fn an_elevated_timeout_stops_the_run() {
         timed_out: true,
     };
     let runner = recorded_runner().respond(
-        "/usr/bin/sudo -n -- softwareupdate --install macOS Tahoe 26.7.2-25H210",
+        "/usr/bin/sudo -n -- /usr/sbin/softwareupdate --install macOS Tahoe 26.7.2-25H210",
         timed_out,
     );
     let report = inventory(&runner, &os_macos("26.7.1"));

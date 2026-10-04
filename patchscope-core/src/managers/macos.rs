@@ -182,6 +182,11 @@ pub(crate) fn parse_softwareupdate(text: &str, os_major: Option<u32>) -> Vec<Ava
     out
 }
 
+/// Elevated commands name their program by absolute path: `sudo` on macOS
+/// has no `secure_path`, so a bare name would be looked up on the caller's
+/// PATH, where Homebrew's user-writable /usr/local/bin comes first.
+const SOFTWAREUPDATE: &str = "/usr/sbin/softwareupdate";
+
 impl Manager for Softwareupdate {
     fn id(&self) -> ManagerId {
         ManagerId::Softwareupdate
@@ -215,7 +220,7 @@ impl Manager for Softwareupdate {
         Ok(ups)
     }
     fn install_command(&self, u: &AvailableUpdate) -> CommandSpec {
-        let mut spec = CommandSpec::new("softwareupdate", &["--install", &u.id]);
+        let mut spec = CommandSpec::new(SOFTWAREUPDATE, &["--install", &u.id]);
         if u.kind == UpdateKind::OsUpgrade {
             spec = spec.arg("--agree-to-license");
         }
@@ -356,6 +361,10 @@ mod tests {
         let cmd = Softwareupdate.install_command(&u[0]);
         assert_eq!(cmd.args, ["--install", "macOS Tahoe 26.7.2-25H210"]);
         assert!(cmd.needs_elevation);
+        assert_eq!(
+            cmd.program, "/usr/sbin/softwareupdate",
+            "elevated: never looked up on PATH"
+        );
         assert!(
             Softwareupdate
                 .install_command(&u[1])
