@@ -449,9 +449,24 @@ jobs:
         run: ls -l dist && test "$(find dist -type f | wc -l)" -eq 6
 
       - name: Attest build provenance
+        id: attest
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: dist/patchscope-*
+
+      # The same signed attestation, attached to the release as a Sigstore
+      # bundle, so a download can be verified without GitHub's attestation
+      # API (`gh attestation verify --bundle`) and tools that look for a
+      # signature beside the files (OpenSSF Scorecard) find one.
+      - name: Attach the attestation bundle
+        env:
+          BUNDLE: ${{ steps.attest.outputs.bundle-path }}
+        run: |
+          set -euo pipefail
+          jq -se 'length == 1 and (.[0].mediaType | startswith("application/vnd.dev.sigstore.bundle"))' "$BUNDLE" >/dev/null \
+            || { echo "::error::expected exactly one Sigstore bundle in $BUNDLE"; exit 1; }
+          jq -c . "$BUNDLE" > "dist/patchscope-${GITHUB_REF_NAME}-provenance.sigstore.json"
+          ls -l dist && test "$(find dist -type f | wc -l)" -eq 7
 
       - name: Create draft release, attach files, publish
         env:
@@ -466,7 +481,7 @@ jobs:
             gh release upload "$GITHUB_REF_NAME" --clobber dist/*
           else
             gh release create "$GITHUB_REF_NAME" --draft --verify-tag --title "$GITHUB_REF_NAME" \
-              --notes "See [CHANGELOG.md](https://github.com/${GITHUB_REPOSITORY}/blob/${GITHUB_REF_NAME}/CHANGELOG.md) for details. Verify a download with the SHA256SUMS file for your platform and \`gh attestation verify <archive> --repo ${GITHUB_REPOSITORY} --signer-workflow ${GITHUB_REPOSITORY}/.github/workflows/ci.yml\`." \
+              --notes "See [CHANGELOG.md](https://github.com/${GITHUB_REPOSITORY}/blob/${GITHUB_REF_NAME}/CHANGELOG.md) for details. Verify a download with the SHA256SUMS file for your platform and \`gh attestation verify <archive> --repo ${GITHUB_REPOSITORY} --signer-workflow ${GITHUB_REPOSITORY}/.github/workflows/ci.yml\` (add \`--bundle patchscope-${GITHUB_REF_NAME}-provenance.sigstore.json\` to use the attached attestation instead of fetching it)." \
               dist/*
           fi
           gh release edit "$GITHUB_REF_NAME" --draft=false

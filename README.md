@@ -48,6 +48,11 @@ gh attestation verify patchscope-v0.1.0-linux-x86_64.tar.gz \
   --repo RobS96/patchscope --signer-workflow RobS96/patchscope/.github/workflows/ci.yml
 sha256sum -c SHA256SUMS-linux-x86_64.txt
 ```
+
+Releases after v0.1.0 also attach that attestation as
+`patchscope-<version>-provenance.sigstore.json`. Add
+`--bundle patchscope-<version>-provenance.sigstore.json` to the command above
+to check against the attached copy instead of fetching it from GitHub.
 </details>
 
 ### 2. Run the app

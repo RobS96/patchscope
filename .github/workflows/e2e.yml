@@ -91,7 +91,32 @@ jobs:
           esac
 
       - name: Plant a known-vulnerable package
-        run: npm install --global --no-fund --no-audit minimist@1.2.0
+        # Pinned by hash: the tarball is fetched with `npm pack`, checked
+        # against the registry's published integrity for this version, and
+        # unpacked into the global tree exactly where `npm install --global`
+        # would put it (minimist has no dependencies, no bin and no install
+        # scripts). Deliberately not a lockfile in the repository: dependency
+        # scanners would report this fixture as a vulnerable dependency of
+        # patchscope.
+        env:
+          FIXTURE: minimist@1.2.0
+          FIXTURE_INTEGRITY: sha512-7Wl+Jz+IGWuSdgsQEJ4JunV0si/iMhg42MnQQG6h1R6TNeVenp4U9x5CC5v/gYqz/fENLQITAWXidNtVL0NNbw==
+        run: |
+          set -euo pipefail
+          # Relative names only: Git Bash's tar reads "D:\..." as a remote host.
+          cd "$(mktemp -d)"
+          tgz=$(npm pack --json "$FIXTURE" | jq -r '.[0].filename')
+          node - "$tgz" <<'JS'
+          const crypto = require('crypto'), fs = require('fs');
+          const got = 'sha512-' + crypto.createHash('sha512').update(fs.readFileSync(process.argv[2])).digest('base64');
+          if (got !== process.env.FIXTURE_INTEGRITY) {
+            console.error(`::error::${process.env.FIXTURE} integrity mismatch: ${got}`);
+            process.exit(1);
+          }
+          JS
+          tar -xzf "$tgz"
+          node -e "require('fs').cpSync('package', require('path').join(process.argv[1], 'minimist'), { recursive: true })" "$(npm root --global)"
+          npm ls --global minimist --json | jq -e '.dependencies.minimist.version == "1.2.0"'
 
       - name: Scan finds and explains it
         run: |
