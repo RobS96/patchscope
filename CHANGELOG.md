@@ -12,6 +12,16 @@ uses [Semantic Versioning](https://semver.org/).
   every change and weekly, and Dependabot keeps the fuzz targets'
   lockfile current.
 
+### Security
+
+- The desktop app shows text patchscope did not write with control,
+  invisible and bidirectional characters escaped, as the terminal and
+  reports already do, including in the install confirmation.
+- Windows: Chocolatey and Windows PowerShell are run by absolute path
+  (`%ProgramData%\chocolatey\bin\choco.exe`,
+  `%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe`) instead
+  of being found on `PATH` while patchscope runs as Administrator.
+
 ## [0.1.1] - 2026-10-04
 
 ### Added

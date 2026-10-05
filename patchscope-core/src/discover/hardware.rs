@@ -1,7 +1,7 @@
 //! Hardware inventory: portable facts from `sysinfo`, then the vendor's own
 //! tool for model, firmware, GPU and battery details.
 
-use crate::exec::{CommandRunner, CommandSpec};
+use crate::exec::{CommandRunner, CommandSpec, windows_powershell_program};
 use crate::model::{BatteryInfo, CpuInfo, DiskInfo, HardwareInfo, MemoryInfo, NetworkInterface, OsFamily, Temperature};
 use serde_json::Value;
 use std::time::Duration;
@@ -235,8 +235,11 @@ $gpu = @(Get-CimInstance Win32_VideoController | ForEach-Object { $_.Name })
 
 fn windows(runner: &dyn CommandRunner, hw: &mut HardwareInfo, warnings: &mut Vec<String>) {
     let out = runner.run(
-        &CommandSpec::new("powershell", &["-NoProfile", "-NonInteractive", "-Command", WIN_HW_PS])
-            .timeout(Duration::from_secs(90)),
+        &CommandSpec::new(
+            &windows_powershell_program(),
+            &["-NoProfile", "-NonInteractive", "-Command", WIN_HW_PS],
+        )
+        .timeout(Duration::from_secs(90)),
     );
     match out {
         Ok(o) if o.success() => apply_windows_cim(&o.stdout, hw).unwrap_or_else(|e| warnings.push(e)),

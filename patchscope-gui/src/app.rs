@@ -7,6 +7,7 @@ use patchscope_core::exec::Elevation;
 use patchscope_core::model::{Finding, OsFamily, Scan, Severity};
 use patchscope_core::plan::{Selection, UpdatePlan, build_plan};
 use patchscope_core::policy::Policy;
+use patchscope_core::util::{display_safe as safe, display_safe_multiline as safe_multiline};
 use patchscope_core::{paths, report, util};
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -55,8 +56,29 @@ enum Msg {
 
 fn policy_error_text(e: &str) -> String {
     format!(
-        "The policy file could not be loaded, so installing is off (dry runs still work). Fix it in Settings and save. {e}"
+        "The policy file could not be loaded, so installing is off (dry runs still work). Fix it in Settings and save. {}",
+        safe_multiline(e)
     )
+}
+
+/// Shown under a command whose display differs from what will run, as the
+/// CLI does.
+const ESCAPED_NOTE: &str = "(hidden or control characters shown as \\u{..}, backslashes doubled)";
+
+/// A planned command as shown in the app: text from package managers and
+/// scan files may hold characters egui draws as nothing (bidi overrides,
+/// zero-width characters), so they are shown as escapes and flagged.
+fn command_label(ui: &mut egui::Ui, prefix: &str, command: &str, text: impl Fn(String) -> RichText) {
+    let shown = safe(command);
+    let escaped = shown != command;
+    ui.label(text(format!("{prefix}{shown}")));
+    if escaped {
+        ui.label(
+            RichText::new(ESCAPED_NOTE)
+                .small()
+                .color(severity_color(Severity::High, ui.visuals().dark_mode)),
+        );
+    }
 }
 
 pub fn severity_color(s: Severity, dark: bool) -> Color32 {
@@ -347,7 +369,7 @@ impl App {
             }
             if let Some(b) = &self.busy {
                 ui.spinner();
-                ui.label(b.as_str());
+                ui.label(safe(b));
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.add_enabled_ui(self.scan.is_some(), |ui| {
@@ -372,7 +394,7 @@ impl App {
             ui.horizontal(|ui| {
                 ui.colored_label(
                     severity_color(Severity::Critical, ui.visuals().dark_mode),
-                    format!("⚠ {e}"),
+                    format!("⚠ {}", safe_multiline(&e)),
                 );
                 if ui.small_button("Dismiss").clicked() {
                     self.error = None;
@@ -381,7 +403,7 @@ impl App {
         }
         if let Some(n) = self.notice.clone() {
             ui.horizontal(|ui| {
-                ui.label(n);
+                ui.label(safe(&n));
                 if ui.small_button("OK").clicked() {
                     self.notice = None;
                 }
@@ -446,8 +468,8 @@ which updates to install; nothing changes until you confirm.",
         };
         let s = &scan.analysis.summary;
         let dark = ui.visuals().dark_mode;
-        ui.heading(&scan.report.os.name);
-        ui.label(RichText::new(format!("Scanned {}", scan.report.generated_at)).weak());
+        ui.heading(safe(&scan.report.os.name));
+        ui.label(RichText::new(format!("Scanned {}", safe(&scan.report.generated_at))).weak());
         ui.add_space(8.0);
         ui.horizontal_wrapped(|ui| {
             for sev in Severity::DESCENDING {
@@ -487,7 +509,7 @@ which updates to install; nothing changes until you confirm.",
         });
         for note in report::research_notes(&scan.analysis) {
             ui.add_space(8.0);
-            ui.colored_label(severity_color(Severity::High, dark), format!("⚠ {note}"));
+            ui.colored_label(severity_color(Severity::High, dark), format!("⚠ {}", safe(&note)));
         }
         ui.add_space(12.0);
         ui.horizontal(|ui| {
@@ -507,7 +529,7 @@ which updates to install; nothing changes until you confirm.",
         for f in &top {
             ui.horizontal_wrapped(|ui| {
                 Self::sev_chip(ui, f.severity);
-                ui.label(&f.title);
+                ui.label(safe(&f.title));
             });
         }
         ui.add_space(12.0);
@@ -515,8 +537,8 @@ which updates to install; nothing changes until you confirm.",
         for src in &scan.analysis.sources {
             ui.horizontal_wrapped(|ui| {
                 ui.label(if src.ok { "✔" } else { "✖" });
-                ui.label(RichText::new(&src.name).strong());
-                ui.label(&src.detail);
+                ui.label(RichText::new(safe(&src.name)).strong());
+                ui.label(safe(&src.detail));
             });
         }
         if !scan.report.warnings.is_empty() {
@@ -525,7 +547,7 @@ which updates to install; nothing changes until you confirm.",
                 .id_salt("warnings")
                 .show(ui, |ui| {
                     for w in &scan.report.warnings {
-                        ui.label(w);
+                        ui.label(safe_multiline(w));
                     }
                 });
         }
@@ -573,13 +595,13 @@ which updates to install; nothing changes until you confirm.",
                 continue;
             }
             shown += 1;
-            let header = RichText::new(format!("{}  {}", f.severity.as_str().to_uppercase(), f.title))
+            let header = RichText::new(format!("{}  {}", f.severity.as_str().to_uppercase(), safe(&f.title)))
                 .color(severity_color(f.severity, dark));
             egui::CollapsingHeader::new(header).id_salt(&f.id).show(ui, |ui| {
-                ui.label(RichText::new(format!("{} · {}", f.category.label(), f.subject)).weak());
-                ui.label(&f.rationale);
+                ui.label(RichText::new(format!("{} · {}", f.category.label(), safe(&f.subject))).weak());
+                ui.label(safe_multiline(&f.rationale));
                 if let Some(r) = &f.remediation {
-                    ui.label(RichText::new(format!("Fix: {}", r.summary)).strong());
+                    ui.label(RichText::new(format!("Fix: {}", safe(&r.summary))).strong());
                 }
                 if !f.advisories.is_empty() {
                     egui::Grid::new(format!("adv-{}", f.id))
@@ -593,16 +615,16 @@ which updates to install; nothing changes until you confirm.",
                             ui.end_row();
                             for a in f.advisories.iter().take(50) {
                                 ui.vertical(|ui| {
-                                    ui.hyperlink_to(&a.id, &a.url);
+                                    ui.hyperlink_to(safe(&a.id), &a.url);
                                     let cves = a.cves().join(", ");
                                     if !cves.is_empty() && cves != a.id {
-                                        ui.label(RichText::new(cves).small());
+                                        ui.label(RichText::new(safe(&cves)).small());
                                     }
                                 });
                                 ui.label(
                                     a.cvss_score
                                         .map(|c| format!("CVSS {c:.1}"))
-                                        .or_else(|| a.database_severity.clone())
+                                        .or_else(|| a.database_severity.as_deref().map(safe))
                                         .unwrap_or_else(|| "—".into()),
                                 );
                                 let mut ex = Vec::new();
@@ -613,7 +635,7 @@ which updates to install; nothing changes until you confirm.",
                                     ex.push(format!("EPSS {:.1}%", e * 100.0));
                                 }
                                 ui.label(if ex.is_empty() { "—".into() } else { ex.join(" · ") });
-                                ui.label(a.fixed_versions.join(", "));
+                                ui.label(safe(&a.fixed_versions.join(", ")));
                                 ui.end_row();
                             }
                         });
@@ -622,7 +644,7 @@ which updates to install; nothing changes until you confirm.",
                     }
                 }
                 for r in &f.references {
-                    ui.hyperlink(r);
+                    ui.hyperlink_to(safe(r), r);
                 }
             });
         }
@@ -664,7 +686,7 @@ which updates to install; nothing changes until you confirm.",
         for a in &plan.actions {
             ui.horizontal_wrapped(|ui| {
                 let mut on = self.selected.contains(&a.key);
-                if ui.checkbox(&mut on, "").on_hover_text(&a.key).changed() {
+                if ui.checkbox(&mut on, "").on_hover_text(safe(&a.key)).changed() {
                     if on {
                         self.selected.insert(a.key.clone());
                     } else {
@@ -677,7 +699,7 @@ which updates to install; nothing changes until you confirm.",
                         .small()
                         .strong(),
                 );
-                ui.label(&a.title);
+                ui.label(safe(&a.title));
                 ui.label(RichText::new(a.manager.display_name()).weak());
                 if a.needs_elevation {
                     ui.label(RichText::new("admin").small())
@@ -688,7 +710,9 @@ which updates to install; nothing changes until you confirm.",
                         .on_hover_text("Finishes after a restart");
                 }
             });
-            ui.label(RichText::new(format!("    $ {}", a.command)).monospace().small().weak());
+            command_label(ui, "    $ ", &a.command, |t| {
+                RichText::new(t).monospace().small().weak()
+            });
         }
         if !plan.excluded.is_empty() {
             ui.add_space(6.0);
@@ -696,7 +720,7 @@ which updates to install; nothing changes until you confirm.",
                 .id_salt("excluded")
                 .show(ui, |ui| {
                     for e in &plan.excluded {
-                        ui.label(format!("{} — {}", e.title, e.reason));
+                        ui.label(format!("{} — {}", safe(&e.title), safe(&e.reason)));
                     }
                 });
         }
@@ -748,8 +772,8 @@ which updates to install; nothing changes until you confirm.",
             ui.add_space(6.0);
             egui::ScrollArea::vertical().max_height(280.0).show(ui, |ui| {
                 for a in &plan.actions {
-                    ui.label(RichText::new(&a.title).strong());
-                    ui.label(RichText::new(&a.command).monospace().small());
+                    ui.label(RichText::new(safe(&a.title)).strong());
+                    command_label(ui, "", &a.command, |t| RichText::new(t).monospace().small());
                 }
             });
             ui.add_space(6.0);
@@ -798,7 +822,7 @@ which updates to install; nothing changes until you confirm.",
                 ui.strong("Detail");
                 ui.end_row();
                 for x in &r.results {
-                    ui.label(&x.title);
+                    ui.label(safe(&x.title));
                     let c = match x.status {
                         ActionStatus::Verified | ActionStatus::Installed => Color32::from_rgb(22, 163, 74),
                         ActionStatus::NeedsRestart => severity_color(Severity::Medium, dark),
@@ -806,12 +830,12 @@ which updates to install; nothing changes until you confirm.",
                         ActionStatus::Skipped | ActionStatus::DryRun => Color32::GRAY,
                     };
                     ui.colored_label(c, x.status.label());
-                    ui.label(&x.message);
+                    ui.label(safe(&x.message));
                     ui.end_row();
                 }
             });
             for w in &r.warnings {
-                ui.colored_label(severity_color(Severity::High, dark), w);
+                ui.colored_label(severity_color(Severity::High, dark), safe(w));
             }
             if r.restart_required() {
                 ui.label("Restart the computer to finish installing.");
@@ -833,7 +857,7 @@ which updates to install; nothing changes until you confirm.",
             ui.label("Nothing yet.");
         }
         for l in &self.log {
-            ui.label(RichText::new(l).monospace().small());
+            ui.label(RichText::new(safe_multiline(l)).monospace().small());
         }
     }
 
@@ -847,7 +871,7 @@ which updates to install; nothing changes until you confirm.",
         egui::Grid::new("hw").striped(true).num_columns(2).show(ui, |ui| {
             let mut row = |k: &str, v: String| {
                 ui.strong(k);
-                ui.label(v);
+                ui.label(safe(&v));
                 ui.end_row();
             };
             row("Operating system", r.os.name.clone());
@@ -914,7 +938,7 @@ which updates to install; nothing changes until you confirm.",
         ui.strong("Storage");
         for d in &hw.disks {
             let used = 1.0 - d.free_fraction() as f32;
-            ui.label(format!("{} ({}, {})", d.mount_point, d.file_system, d.kind));
+            ui.label(safe(&format!("{} ({}, {})", d.mount_point, d.file_system, d.kind)));
             ui.add(egui::ProgressBar::new(used).desired_width(360.0).text(format!(
                 "{} free of {}",
                 util::human_bytes(d.available_bytes),
@@ -927,7 +951,7 @@ which updates to install; nothing changes until you confirm.",
                 .id_salt("temps")
                 .show(ui, |ui| {
                     for t in &hw.temperatures {
-                        ui.label(format!("{}: {:.0} °C", t.label, t.celsius));
+                        ui.label(format!("{}: {:.0} °C", safe(&t.label), t.celsius));
                     }
                 });
         }
@@ -936,10 +960,10 @@ which updates to install; nothing changes until you confirm.",
                 .id_salt("nics")
                 .show(ui, |ui| {
                     for n in &hw.network_interfaces {
-                        ui.label(match &n.mac_address {
+                        ui.label(safe(&match &n.mac_address {
                             Some(m) => format!("{} · {m}", n.name),
                             None => n.name.clone(),
-                        });
+                        }));
                     }
                 });
         }
@@ -947,7 +971,10 @@ which updates to install; nothing changes until you confirm.",
             ui.add_space(10.0);
             ui.strong("Language runtimes");
             for rt in &r.runtimes {
-                ui.label(format!("{} {} ({})", rt.display_name, rt.version, rt.path_command));
+                ui.label(safe(&format!(
+                    "{} {} ({})",
+                    rt.display_name, rt.version, rt.path_command
+                )));
             }
         }
     }
@@ -968,7 +995,7 @@ which updates to install; nothing changes until you confirm.",
                 ui.label(m.id.display_name());
                 ui.label(m.installed.len().to_string());
                 ui.label(m.updates.len().to_string());
-                ui.label(m.error.clone().unwrap_or_else(|| "ok".into()));
+                ui.label(m.error.as_deref().map_or_else(|| "ok".into(), safe));
                 ui.end_row();
             }
         });
@@ -984,7 +1011,7 @@ which updates to install; nothing changes until you confirm.",
             .iter()
             .flat_map(|m| m.installed.iter())
             .filter(|p| q.is_empty() || p.name.to_lowercase().contains(&q))
-            .map(|p| format!("{:<14} {}  {}", p.manager.as_str(), p.name, p.version))
+            .map(|p| format!("{:<14} {}  {}", p.manager.as_str(), safe(&p.name), safe(&p.version)))
             .collect();
         ui.label(format!("{} packages", rows.len()));
         let h = ui.text_style_height(&egui::TextStyle::Monospace);
@@ -1050,7 +1077,7 @@ off unless allowed.",
             } else {
                 severity_color(Severity::Critical, ui.visuals().dark_mode)
             };
-            ui.colored_label(c, m);
+            ui.colored_label(c, safe_multiline(m));
         }
     }
 
