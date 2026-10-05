@@ -50,16 +50,23 @@ patchscope scan --skip-manager mas            # all but these
 patchscope scan --offline                     # cached research only, no network
 patchscope scan --include-identifiers         # hostname, serial, MAC addresses
 patchscope scan --fail-on critical            # exit 2 only for critical findings
-patchscope scan --allow-partial               # no exit 4 when a research source failed
+patchscope scan --allow-partial               # no exit 4 when a source could not be queried
 ```
 
 When a research source (OSV.dev, CISA KEV, FIRST EPSS, endoflife.date)
 cannot be fully queried, the report says **Research incomplete**, lists
 the source as an Info finding and under *Sources*, and `scan` and `plan`
-exit with 4: "no findings" then does not mean "nothing found". With
-`--offline` each source's detail gives the age of the cached data
-(`offline, data as of …`); a warm cache is complete research, a missing
-cache entry is not.
+exit with 4: "no findings" then does not mean "nothing found". The same
+holds for a package manager that is installed but whose listing failed or
+timed out (`apt list` erroring, winget unable to search a source,
+`softwareupdate` timing out): the report says **Scan incomplete** and names
+it, it is an Info finding (with the tool's error), and `scan` and `plan`
+exit with 4, because its updates were never seen. A manager that is not
+installed, is disabled in the [policy](#policy), or is left out with
+`--skip-manager` (or not chosen with `--manager`) is not queried and is not
+a failure. With `--offline` each research source's detail gives the age of
+the cached data (`offline, data as of …`); a warm cache is complete
+research, a missing cache entry is not.
 
 ### `discover`: inventory only
 
@@ -161,10 +168,12 @@ Manager ids: `softwareupdate`, `windows-update`, `apt`, `dnf`, `pacman`,
 | 1 | error (bad option, unreadable file …) | error | error, or refused (another apply running, no confirmation) |
 | 2 | at least one finding at or above `--fail-on` | — | — |
 | 3 | — | — | at least one action failed or was skipped |
-| 4 | a research source could not be fully queried (checked before 2) | a research source could not be fully queried | — |
+| 4 | a research source or an installed package manager could not be fully queried (checked before 2) | a research source or an installed package manager could not be fully queried | — |
 
 `--allow-partial` turns 4 off: `scan` then exits 0 or 2 by its findings
-alone, and `plan` exits 0. With `--from`, the saved scan's research counts.
+alone, and `plan` exits 0. With `--from`, what the saved scan recorded
+counts (its research sources and its package managers' errors), whatever
+`--manager`/`--skip-manager` say now.
 
 ## Automating patchscope
 
@@ -200,10 +209,15 @@ audit log says what.
 - **"needs Administrator rights" (Windows):** start the app or terminal
   with *Run as administrator*. winget updates install without it; Windows
   Update and Chocolatey need it.
-- **A source shows "could not be fully queried":** the tool timed out or
-  failed. Its own error is in the finding and in *Discovery notes*. On a
-  Mac, `softwareupdate` can take minutes on a slow network; it is given
-  five.
+- **A package source "could not be fully queried", "Scan incomplete",
+  exit code 4:** the package manager is installed but its listing timed out
+  or failed, so its updates may be missing. Its own error is in the finding,
+  under *Package sources* and in *Discovery warnings*. On a Mac,
+  `softwareupdate` can take minutes on a slow network; it is given five.
+  Fix the manager (or its network) and scan again. If you know it cannot be
+  queried here, leave it out with `--skip-manager <id>` (or `disabled` in the
+  policy) so the rest of the scan can be complete; `--allow-partial`
+  accepts the partial result for this run.
 - **"another patchscope apply is running":** another patchscope is
   installing right now; wait for it to finish. The lock is released when
   that run exits, however it exits, so there is nothing to delete.

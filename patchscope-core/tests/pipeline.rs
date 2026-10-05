@@ -962,6 +962,91 @@ fn unqueried_sources_are_info_findings_and_shown_in_reports() {
 }
 
 #[test]
+fn a_manager_that_could_not_be_queried_makes_the_scan_incomplete() {
+    let runner = recorded_runner();
+    let mut report = inventory(&runner, &os_macos("26.7.1"));
+    let brew = report
+        .managers
+        .iter_mut()
+        .find(|m| m.id == ManagerId::Homebrew)
+        .unwrap();
+    assert!(brew.available);
+    brew.error = Some("listing updates: `brew outdated --json=v2` timed out after 120s".into());
+    // Not on this machine: never a failure, whatever was recorded with it.
+    report.managers.push(ManagerInventory {
+        id: ManagerId::Flatpak,
+        available: false,
+        version: None,
+        installed: Vec::new(),
+        updates: Vec::new(),
+        error: Some("not found".into()),
+    });
+
+    let a = analyze(&report, &research_http(None), &opts(), &|_| {});
+    assert!(a.incomplete_sources().is_empty(), "{:?}", a.sources);
+    let failed: Vec<ManagerId> = report.incomplete_managers().iter().map(|m| m.id).collect();
+    assert_eq!(failed, [ManagerId::Homebrew]);
+    let scan = Scan {
+        report: report.clone(),
+        analysis: a.clone(),
+    };
+    assert!(scan.is_incomplete());
+    assert!(
+        !a.findings.iter().any(|f| f.id == "coverage:flatpak"),
+        "a manager that is not installed was not queried"
+    );
+    // The per-manager Info finding stays.
+    let f = a
+        .findings
+        .iter()
+        .find(|f| f.id == "coverage:homebrew")
+        .expect("an Info finding for the manager");
+    assert_eq!(f.severity, Severity::Info);
+    let notice = "Scan incomplete: Homebrew could not be fully queried, so updates and findings may be missing.";
+    let md = report::markdown(&report, Some(&a), None);
+    assert!(md.contains(notice), "{md}");
+    assert!(!md.contains("Flatpak could not"), "{md}");
+    let html = report::html(&report, Some(&a), None);
+    assert!(html.contains(notice), "{html}");
+
+    // Both kinds in one notice, research sources first.
+    let down = FakeHttp::new().fail("https://", "network unreachable").post_fail_when(
+        "https://api.osv.dev/v1/querybatch",
+        "",
+        "network unreachable",
+    );
+    let a = analyze(&report, &down, &opts(), &|_| {});
+    let md = report::markdown(&report, Some(&a), None);
+    assert!(
+        md.contains(
+            "Scan incomplete: OSV.dev, endoflife.date and Homebrew could not be fully queried, so updates and findings may be missing or rated too low (see Sources)."
+        ),
+        "{md}"
+    );
+
+    // Research only: the wording it always had.
+    report.managers.retain(|m| m.id != ManagerId::Homebrew);
+    let a = analyze(&report, &down, &opts(), &|_| {});
+    let md = report::markdown(&report, Some(&a), None);
+    assert!(
+        md.contains(
+            "Research incomplete: OSV.dev and endoflife.date could not be fully queried, so findings may be missing or rated too low (see Sources)."
+        ),
+        "{md}"
+    );
+    let ok = analyze(&report, &research_http(None), &opts(), &|_| {});
+    let md = report::markdown(&report, Some(&ok), None);
+    assert!(!md.contains("incomplete:"), "{md}");
+    assert!(
+        !Scan {
+            report: report.clone(),
+            analysis: ok
+        }
+        .is_incomplete()
+    );
+}
+
+#[test]
 fn offline_results_say_how_old_they_are() {
     let runner = recorded_runner();
     let report = inventory(&runner, &os_macos("26.7.1"));

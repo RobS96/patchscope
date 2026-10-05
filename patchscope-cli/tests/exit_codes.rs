@@ -6,6 +6,15 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn saved_scan(dir: &Path, sources: Vec<SourceStatus>, findings: Vec<Finding>) -> PathBuf {
+    saved_scan_with(dir, sources, Vec::new(), findings)
+}
+
+fn saved_scan_with(
+    dir: &Path,
+    sources: Vec<SourceStatus>,
+    managers: Vec<ManagerInventory>,
+    findings: Vec<Finding>,
+) -> PathBuf {
     let scan = Scan {
         report: SystemReport {
             schema_version: SCHEMA_VERSION,
@@ -25,7 +34,7 @@ fn saved_scan(dir: &Path, sources: Vec<SourceStatus>, findings: Vec<Finding>) ->
             },
             hardware: HardwareInfo::default(),
             runtimes: Vec::new(),
-            managers: Vec::new(),
+            managers,
             warnings: Vec::new(),
         },
         analysis: Analysis {
@@ -51,6 +60,17 @@ fn src(name: &str, ok: bool) -> SourceStatus {
         } else {
             "network unreachable".into()
         },
+    }
+}
+
+fn manager(id: ManagerId, available: bool, error: Option<&str>) -> ManagerInventory {
+    ManagerInventory {
+        id,
+        available,
+        version: available.then(|| "1".into()),
+        installed: Vec::new(),
+        updates: Vec::new(),
+        error: error.map(Into::into),
     }
 }
 
@@ -138,4 +158,99 @@ fn incomplete_research_takes_precedence_over_findings() {
     assert_eq!(code, 4);
     let (code, _) = run(dir.path(), &["scan", "--from", from, "--allow-partial"]);
     assert_eq!(code, 2, "with --allow-partial the findings decide");
+}
+
+#[test]
+fn a_manager_that_could_not_be_queried_is_not_a_clean_scan() {
+    let dir = tempfile::tempdir().unwrap();
+    let scan = saved_scan_with(
+        dir.path(),
+        vec![src("OSV.dev", true)],
+        vec![
+            manager(
+                ManagerId::Apt,
+                true,
+                Some("listing updates: `apt list --upgradable` timed out after 300s"),
+            ),
+            manager(ManagerId::NpmGlobal, true, None),
+        ],
+        Vec::new(),
+    );
+    let from = scan.to_str().unwrap();
+
+    let (code, out) = run(dir.path(), &["scan", "--from", from]);
+    assert_eq!(code, 4, "APT's updates were never seen: {out}");
+    assert!(out.contains("Scan incomplete: APT could not be fully queried"), "{out}");
+    assert!(!out.contains("npm (global) could not"), "{out}");
+    let (code, out) = run(dir.path(), &["scan", "--from", from, "--allow-partial"]);
+    assert_eq!(code, 0, "{out}");
+    let (code, out) = run(dir.path(), &["plan", "--from", from]);
+    assert_eq!(code, 4, "{out}");
+    assert!(out.contains("Scan incomplete: APT could not be fully queried"), "{out}");
+    let (code, out) = run(dir.path(), &["plan", "--from", from, "--allow-partial"]);
+    assert_eq!(code, 0, "{out}");
+    for format in ["markdown", "html"] {
+        let (code, out) = run(dir.path(), &["scan", "--from", from, "--format", format]);
+        assert_eq!(code, 4, "{format}: {out}");
+        assert!(out.contains("Scan incomplete: APT"), "{format}: {out}");
+    }
+}
+
+#[test]
+fn a_failed_manager_takes_precedence_over_findings() {
+    let dir = tempfile::tempdir().unwrap();
+    let scan = saved_scan_with(
+        dir.path(),
+        vec![src("OSV.dev", true)],
+        vec![manager(
+            ManagerId::Apt,
+            true,
+            Some("listing installed: dpkg-query failed"),
+        )],
+        vec![high_finding()],
+    );
+    let from = scan.to_str().unwrap();
+    let (code, _) = run(dir.path(), &["scan", "--from", from]);
+    assert_eq!(code, 4);
+    let (code, _) = run(dir.path(), &["scan", "--from", from, "--allow-partial"]);
+    assert_eq!(code, 2, "with --allow-partial the findings decide");
+}
+
+#[test]
+fn research_and_manager_failures_are_named_together() {
+    let dir = tempfile::tempdir().unwrap();
+    let scan = saved_scan_with(
+        dir.path(),
+        vec![src("OSV.dev", false), src("CISA KEV", true)],
+        vec![manager(ManagerId::Apt, true, Some("listing updates: exit status 100"))],
+        Vec::new(),
+    );
+    let (code, out) = run(dir.path(), &["scan", "--from", scan.to_str().unwrap()]);
+    assert_eq!(code, 4, "{out}");
+    assert!(
+        out.contains("Scan incomplete: OSV.dev and APT could not be fully queried"),
+        "{out}"
+    );
+}
+
+#[test]
+fn a_manager_that_is_not_installed_is_not_a_failure() {
+    let dir = tempfile::tempdir().unwrap();
+    // Snap is not on this machine; one recorded with an error anyway (a
+    // hand-edited or older scan) still was never a source of updates.
+    let scan = saved_scan_with(
+        dir.path(),
+        vec![src("OSV.dev", true)],
+        vec![
+            manager(ManagerId::Apt, true, None),
+            manager(ManagerId::Snap, false, None),
+            manager(ManagerId::Flatpak, false, Some("not found")),
+        ],
+        Vec::new(),
+    );
+    let (code, out) = run(dir.path(), &["scan", "--from", scan.to_str().unwrap()]);
+    assert_eq!(code, 0, "{out}");
+    assert!(!out.contains("incomplete"), "{out}");
+    let (code, out) = run(dir.path(), &["plan", "--from", scan.to_str().unwrap()]);
+    assert_eq!(code, 0, "{out}");
 }

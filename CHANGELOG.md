@@ -12,6 +12,15 @@ uses [Semantic Versioning](https://semver.org/).
   every change and weekly, and Dependabot keeps the fuzz targets'
   lockfile current.
 
+### Changed
+
+- `scan` and `plan` also exit with 4 when an installed package manager
+  could not be fully queried (its listing failed or timed out), not only
+  when a research source failed: such a scan never saw that manager's
+  updates. `--allow-partial` accepts it; a manager that is not installed,
+  disabled by policy or skipped with `--skip-manager` does not count. The
+  notice reads "Scan incomplete: …" and names the managers.
+
 ### Security
 
 - The desktop app shows text patchscope did not write with control,

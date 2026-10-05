@@ -507,7 +507,7 @@ which updates to install; nothing changes until you confirm.",
                 });
             });
         });
-        for note in report::research_notes(&scan.analysis) {
+        for note in report::scan_notes(&scan.report, &scan.analysis) {
             ui.add_space(8.0);
             ui.colored_label(severity_color(Severity::High, dark), format!("⚠ {}", safe(&note)));
         }
