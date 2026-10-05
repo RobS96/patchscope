@@ -39,6 +39,15 @@ impl SystemReport {
     pub fn installed_count(&self) -> usize {
         self.managers.iter().map(|m| m.installed.len()).sum()
     }
+
+    /// Package managers present on this machine whose installed packages or
+    /// updates could not be (fully) listed. When this is not empty, "no
+    /// updates" does not mean "nothing to update". A manager that is not
+    /// installed, or was not queried (disabled, `--skip-manager`, not
+    /// selected with `--manager`), is not among them.
+    pub fn incomplete_managers(&self) -> Vec<&ManagerInventory> {
+        self.managers.iter().filter(|m| m.failed()).collect()
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
@@ -279,6 +288,14 @@ pub struct ManagerInventory {
     pub updates: Vec<AvailableUpdate>,
     /// Set when the manager is present but could not be queried.
     pub error: Option<String>,
+}
+
+impl ManagerInventory {
+    /// Present, but its listing failed or timed out, so what it reports may
+    /// be incomplete.
+    pub fn failed(&self) -> bool {
+        self.available && self.error.is_some()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -557,6 +574,15 @@ impl Analysis {
 pub struct Scan {
     pub report: SystemReport,
     pub analysis: Analysis,
+}
+
+impl Scan {
+    /// A research source ([`Analysis::incomplete_sources`]) or a package
+    /// manager ([`SystemReport::incomplete_managers`]) could not be (fully)
+    /// queried, so the absence of findings proves nothing.
+    pub fn is_incomplete(&self) -> bool {
+        !self.analysis.incomplete_sources().is_empty() || !self.report.incomplete_managers().is_empty()
+    }
 }
 
 #[cfg(test)]

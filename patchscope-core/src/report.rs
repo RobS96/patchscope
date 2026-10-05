@@ -134,7 +134,7 @@ pub fn markdown(report: &SystemReport, analysis: Option<&Analysis>, plan: Option
             s.advisories,
             s.kev_advisories
         );
-        for n in research_notes(a) {
+        for n in scan_notes(report, a) {
             let _ = writeln!(o, "> **{}**\n", md_escape(&n));
         }
         let _ = writeln!(o, "| Severity | Finding | Category | Fix |\n|---|---|---|---|");
@@ -251,17 +251,49 @@ fn link(url: &str) -> String {
     }
 }
 
-/// One-line notes that belong above any findings list: research that was
-/// incomplete, and research served from the offline cache.
-pub fn research_notes(a: &Analysis) -> Vec<String> {
-    let mut notes = Vec::new();
-    let missing = a.incomplete_sources();
-    if !missing.is_empty() {
-        notes.push(format!(
-            "Research incomplete: {} could not be fully queried, so findings may be missing or rated too low (see Sources).",
-            missing.iter().map(|s| s.name.as_str()).collect::<Vec<_>>().join(", ")
-        ));
+/// "a", "a and b", "a, b and c".
+fn and_list(items: &[&str]) -> String {
+    match items {
+        [] => String::new(),
+        [one] => (*one).to_string(),
+        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
     }
+}
+
+/// The one-line notice that a scan is incomplete: which research sources
+/// and which package managers could not be (fully) queried. `None` when
+/// both were complete.
+pub fn incomplete_notice(report: &SystemReport, a: &Analysis) -> Option<String> {
+    let sources = a.incomplete_sources();
+    let managers = report.incomplete_managers();
+    let names: Vec<&str> = sources
+        .iter()
+        .map(|s| s.name.as_str())
+        .chain(managers.iter().map(|m| m.id.display_name()))
+        .collect();
+    Some(match (sources.is_empty(), managers.is_empty()) {
+        (true, true) => return None,
+        (false, true) => format!(
+            "Research incomplete: {} could not be fully queried, so findings may be missing or rated too low (see Sources).",
+            and_list(&names)
+        ),
+        (true, false) => format!(
+            "Scan incomplete: {} could not be fully queried, so updates and findings may be missing.",
+            and_list(&names)
+        ),
+        (false, false) => format!(
+            "Scan incomplete: {} could not be fully queried, so updates and findings may be missing or rated too low (see Sources).",
+            and_list(&names)
+        ),
+    })
+}
+
+/// One-line notes that belong above any findings list: a scan that was
+/// incomplete (research or package managers), and research served from the
+/// offline cache.
+pub fn scan_notes(report: &SystemReport, a: &Analysis) -> Vec<String> {
+    let mut notes = Vec::new();
+    notes.extend(incomplete_notice(report, a));
     if a.offline {
         notes.push("Offline: research data comes from the local cache (see Sources for how old it is).".into());
     }
@@ -319,7 +351,7 @@ pub fn html(report: &SystemReport, analysis: Option<&Analysis>, plan: Option<&Up
             "<div class=\"tile\"><b>{}</b>updates ({} security)</div><div class=\"tile\"><b>{}</b>exploited (KEV)</div></div>",
             s.updates_available, s.security_updates, s.kev_advisories
         );
-        for n in research_notes(a) {
+        for n in scan_notes(report, a) {
             let _ = write!(o, "<p class=\"note\"><b>{}</b></p>", h(&n));
         }
     }

@@ -32,7 +32,9 @@ each source's status then says how old the data is (`offline, data as of
 
 A source whose query failed, or that answered only in part, is marked ✗
 under *Sources*, becomes an Info finding, and makes the report say
-**Research incomplete**; `scan` and `plan` exit with 4 unless
+**Research incomplete** (**Scan incomplete** when a package manager
+failed as well, [below](#when-a-package-manager-could-not-be-queried));
+`scan` and `plan` exit with 4 unless
 `--allow-partial` is given (see [exit codes](user-guide.md#exit-codes)).
 "In part" means: a later page of OSV results could not be read (or there
 were more than 20 pages), or an advisory record could not be fetched. Such
@@ -43,6 +45,23 @@ ids, no CVE alias to match against KEV and EPSS.
 The deliberate limits (400 advisory records in full, 2000 CVEs to EPSS)
 are not failures: the source stays ✓ and its status says how many were
 left out.
+
+### When a package manager could not be queried
+
+Package-manager evidence is the other half of a scan: every pending update,
+and every installed version sent to OSV, comes from a manager's own
+listing. A manager that is installed but whose listing of installed
+packages or of updates failed (an exit status that does not mean
+"updates exist", for instance) or ran past its time limit becomes an Info finding with the tool's error and makes the report say
+**Scan incomplete**, naming it alongside any research source that failed;
+`scan` and `plan` exit with 4 unless `--allow-partial` is given. Whatever
+the manager did list is still used.
+
+Not failures: a manager that is not installed or does not exist on this
+OS, one disabled in the policy, and one left out with `--skip-manager` or
+not chosen with `--manager`. Those are not queried at all, and the report
+does not claim to cover them. A saved scan (`--from`) is judged by the
+manager errors it recorded.
 
 **What leaves the machine:** package names, versions and their ecosystem
 (to OSV.dev), CVE ids (to FIRST), and product names (to endoflife.date).

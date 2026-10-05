@@ -607,3 +607,14 @@ fn untrusted_text_shows_hidden_characters_as_escapes() {
     assert_eq!(raw_chars_shown(&h), 0, "activity");
     assert!(escapes_shown(&h) >= 2, "result row and log line");
 }
+
+#[test]
+fn overview_says_when_a_package_source_could_not_be_queried() {
+    let dir = tempfile_dir();
+    let mut h = harness(Arc::new(FakeBackend::default()), dir.path());
+    let mut scan = recorded_scan();
+    scan.report.managers[0].error = Some("listing updates: `npm outdated` timed out".into());
+    h.state_mut().scan = Some(scan);
+    h.run_steps(2);
+    h.get_by_label_contains("Scan incomplete: npm (global) could not be fully queried");
+}

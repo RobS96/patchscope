@@ -354,7 +354,7 @@ pub fn analyze(report: &SystemReport, http: &dyn HttpClient, opts: &AnalyzeOptio
     findings.extend(hardware_findings(report, opts));
 
     // ---- managers that could not be queried
-    for m in report.managers.iter().filter(|m| m.error.is_some()) {
+    for m in report.incomplete_managers() {
         findings.push(Finding {
             id: format!("coverage:{}", m.id),
             severity: Severity::Info,
