@@ -30,8 +30,8 @@ shown before it runs:
 | Flatpak | `flatpak update -y --noninteractive APP-OR-RUNTIME` |
 | Snap | `snap refresh NAME` (root) |
 | winget | `winget upgrade --id ID --exact --silent --accept-package-agreements …` |
-| Chocolatey | `choco upgrade NAME -y --no-progress` (Administrator) |
-| Windows Update | a PowerShell script that searches for the one UpdateID, downloads and installs it (Administrator) |
+| Chocolatey | `choco upgrade NAME -y --no-progress` (Administrator; `%ProgramData%\chocolatey\bin\choco.exe`) |
+| Windows Update | a Windows PowerShell (`%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe`) script that searches for the one UpdateID, downloads and installs it (Administrator) |
 | npm (global) | `npm install --global NAME@VERSION` |
 | rustup | `rustup update TOOLCHAIN` / `rustup self update` |
 
@@ -75,10 +75,13 @@ the machine.
   terminal or rearrange what you read: control characters (escape
   sequences, carriage returns) and invisible or bidirectional formatting
   characters (right-to-left overrides, zero-width characters) are shown as
-  `\u{..}` escapes in the CLI and in both reports, and a command containing
-  any is flagged where it is shown. Markdown reports also escape every
-  character that could form a link, image, HTML tag or emphasis, and fence
-  each command so it cannot leave its code span.
+  `\u{..}` escapes in the CLI, in the app (whose text rendering would
+  otherwise draw them as nothing) and in both reports, and a command
+  containing any is flagged where it is shown. Only the display changes:
+  what is planned and run is the text as the package manager gave it.
+  Markdown reports also escape every character that could form a link,
+  image, HTML tag or emphasis, and fence each command so it cannot leave
+  its code span.
 
 ## Privileges
 
@@ -108,6 +111,21 @@ Windows Update and Chocolatey updates. Unelevated, those are *skipped*
 the process is elevated is read from its token (`whoami /groups`, run from
 `System32`: High or System integrity level), so it does not depend on the
 Server service that `net session` needs.
+
+Elevated, everything patchscope starts runs as Administrator, so the
+programs behind Chocolatey and Windows Update (and the PowerShell queries
+that read the Windows version and hardware) are not looked up on `PATH`
+either, for listing as well as installing:
+`%ProgramData%\chocolatey\bin\choco.exe`, where the Chocolatey installer
+puts it, and `%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe`.
+A `SystemRoot` or `ProgramData` that is not a path from the root of a drive
+is replaced by `C:\Windows` or `C:\ProgramData`. `ChocolateyInstall` is not
+used: a user-level setting can point it at a folder the user can write, and
+an absolute path there is no safer. A Chocolatey installed elsewhere is
+still detected, but its commands fail with "not found". winget (a per-user
+App Execution Alias), npm and rustup have no fixed system path and never
+need elevation to install; in an elevated session they run elevated too,
+so start patchscope unelevated when those are all you want to update.
 
 ## The policy guardrails
 

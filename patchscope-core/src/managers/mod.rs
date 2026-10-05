@@ -476,6 +476,59 @@ mod tests {
     }
 
     #[test]
+    fn windows_commands_name_their_program_by_absolute_path() {
+        // Windows has no sudo: patchscope runs elevated as a whole to install
+        // Chocolatey and Windows Update updates, so the programs of those
+        // managers (listing included) run as Administrator. A bare name is
+        // looked up on PATH, where a user-writable directory can come first.
+        // The per-user tools (winget, an App Execution Alias; npm; rustup)
+        // have no fixed system path and never need elevation to install.
+        let ctx = test_ctx(OsFamily::Windows, None);
+        let mut checked = 0;
+        let mut elevated_managers = Vec::new();
+        for m in all() {
+            if !m.supported_on(OsFamily::Windows) {
+                continue;
+            }
+            // Listing and version commands, as discovery runs them.
+            let runner = FakeRunner::new().answer_everything(CommandOutput::ok(""));
+            let _ = m.version(&runner);
+            let _ = m.installed(&runner, &ctx);
+            let _ = m.updates(&runner, &ctx);
+            let mut specs = runner.calls();
+            specs.extend(m.refresh_command());
+            for kind in [UpdateKind::Package, UpdateKind::OsUpdate, UpdateKind::Application] {
+                specs.push(m.install_command(&AvailableUpdate {
+                    manager: m.id(),
+                    id: "0f7e7b3a-1c2d-4e5f-8a9b-0c1d2e3f4a5b".into(),
+                    name: "pkg".into(),
+                    installed_version: Some("1".into()),
+                    available_version: "2".into(),
+                    kind,
+                    security: false,
+                    restart_required: false,
+                    notes: None,
+                }));
+            }
+            if !specs.iter().any(|s| s.needs_elevation) {
+                continue;
+            }
+            elevated_managers.push(m.id());
+            for s in &specs {
+                assert!(
+                    crate::exec::is_windows_drive_path(&s.program),
+                    "{}: `{}` must name its program by absolute path",
+                    m.id(),
+                    s.display()
+                );
+                checked += 1;
+            }
+        }
+        assert_eq!(elevated_managers, [ManagerId::WindowsUpdate, ManagerId::Chocolatey]);
+        assert!(checked >= 8, "only {checked} commands checked");
+    }
+
+    #[test]
     fn distro_ecosystems() {
         let e = |d, v| test_ctx(OsFamily::Linux, Some((d, v))).osv_distro_ecosystem();
         assert_eq!(e("debian", "12").as_deref(), Some("Debian:12"));

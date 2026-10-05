@@ -541,10 +541,43 @@ pub fn is_elevated(runner: &dyn CommandRunner) -> bool {
     }
 }
 
+/// Whether `p` is a Windows path from the root of a drive (`C:\...`).
+pub(crate) fn is_windows_drive_path(p: &str) -> bool {
+    let b = p.as_bytes();
+    b.len() >= 3 && b[0].is_ascii_alphabetic() && b[1] == b':' && (b[2] == b'\\' || b[2] == b'/')
+}
+
+/// A Windows directory named by an environment variable (`SystemRoot`,
+/// `ProgramData`), or `default` when it is unset or not a path from the
+/// root of a drive. Windows has no `sudo`: patchscope runs elevated as a
+/// whole, so the programs it starts are named by absolute path rather than
+/// looked up on `PATH`, where a user-writable directory can come first.
+pub(crate) fn windows_dir(value: Option<&str>, default: &str) -> String {
+    match value {
+        Some(v) if is_windows_drive_path(v) => v.trim_end_matches(['\\', '/']).to_string(),
+        _ => default.to_string(),
+    }
+}
+
+/// Windows PowerShell for a given `%SystemRoot%`:
+/// `%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe`.
+pub(crate) fn windows_powershell_program_for(system_root: Option<&str>) -> String {
+    format!(
+        r"{}\System32\WindowsPowerShell\v1.0\powershell.exe",
+        windows_dir(system_root, r"C:\Windows")
+    )
+}
+
+/// Windows PowerShell by absolute path, so nothing earlier on PATH can
+/// stand in for it.
+pub(crate) fn windows_powershell_program() -> String {
+    windows_powershell_program_for(std::env::var("SystemRoot").ok().as_deref())
+}
+
 /// `whoami.exe` by absolute path, so nothing earlier on PATH can answer.
 fn whoami_program() -> String {
-    let root = std::env::var_os("SystemRoot").map_or_else(|| PathBuf::from(r"C:\Windows"), PathBuf::from);
-    root.join("System32").join("whoami.exe").to_string_lossy().into_owned()
+    let root = windows_dir(std::env::var("SystemRoot").ok().as_deref(), r"C:\Windows");
+    format!(r"{root}\System32\whoami.exe")
 }
 
 /// Read the process token's integrity level: High (`S-1-16-12288`) or
@@ -642,6 +675,36 @@ mod tests {
     }
 
     #[test]
+    fn windows_programs_are_named_by_absolute_path() {
+        assert_eq!(
+            windows_powershell_program_for(Some(r"D:\WINDOWS")),
+            r"D:\WINDOWS\System32\WindowsPowerShell\v1.0\powershell.exe"
+        );
+        assert_eq!(
+            windows_powershell_program_for(Some(r"C:\Windows\")),
+            r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"
+        );
+        // Unset, relative, UNC or empty: the default, never a PATH lookup.
+        for bad in [
+            None,
+            Some(""),
+            Some("Windows"),
+            Some(r"\\server\share"),
+            Some(r"..\x"),
+            Some("C:"),
+        ] {
+            assert_eq!(
+                windows_powershell_program_for(bad),
+                r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
+                "{bad:?}"
+            );
+        }
+        assert!(is_windows_drive_path(&windows_powershell_program()));
+        assert!(is_windows_drive_path(&whoami_program()));
+        assert!(whoami_program().ends_with(r"\System32\whoami.exe"));
+    }
+
+    #[test]
     fn windows_elevation_is_read_from_the_token() {
         // `whoami /groups /fo csv /nh`: the integrity level is a group. High
         // (S-1-16-12288) or System (S-1-16-16384) means elevated; this works
@@ -698,7 +761,10 @@ mod tests {
     fn system_runner_times_out() {
         let r = SystemRunner::new();
         let spec = if cfg!(windows) {
-            CommandSpec::new("powershell", &["-NoProfile", "-Command", "Start-Sleep -Seconds 30"])
+            CommandSpec::new(
+                &windows_powershell_program(),
+                &["-NoProfile", "-Command", "Start-Sleep -Seconds 30"],
+            )
         } else {
             CommandSpec::new("sleep", &["30"])
         }

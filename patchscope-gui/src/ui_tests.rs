@@ -14,6 +14,8 @@ use std::time::Duration;
 #[derive(Default)]
 struct FakeBackend {
     applied: Mutex<Vec<(Vec<String>, bool)>>,
+    /// What a scan returns instead of [`recorded_scan`].
+    scan: Option<Scan>,
 }
 
 fn update(manager: ManagerId, id: &str, from: &str, to: &str, security: bool) -> AvailableUpdate {
@@ -146,7 +148,7 @@ pub fn recorded_scan() -> Scan {
 impl Backend for FakeBackend {
     fn scan(&self, _s: &ScanSettings, progress: Progress) -> Result<Scan, String> {
         progress("Querying npm (global)…");
-        Ok(recorded_scan())
+        Ok(self.scan.clone().unwrap_or_else(recorded_scan))
     }
     fn apply(
         &self,
@@ -175,7 +177,7 @@ impl Backend for FakeBackend {
                     },
                     exit_code: Some(0),
                     duration_ms: 1,
-                    message: "ok".into(),
+                    message: format!("ok {}", a.updates[0].name),
                     output_tail: String::new(),
                 }
             })
@@ -509,4 +511,99 @@ fn overview_says_when_research_is_incomplete() {
     h.state_mut().scan = Some(scan);
     h.run_steps(2);
     h.get_by_label_contains("Research incomplete: OSV.dev");
+}
+
+#[test]
+fn untrusted_text_shows_hidden_characters_as_escapes() {
+    // egui draws bidi overrides and zero-width characters as nothing, so a
+    // crafted package name could hide or reorder what the confirmation
+    // dialog says. Like the CLI, the app shows them as `\u{..}` escapes.
+    const RLO: char = '\u{202e}';
+    const ZWSP: char = '\u{200b}';
+    let mut scan = recorded_scan();
+    // Titles are built from the package name, which no manager validates.
+    scan.report.managers[0].updates[1].name = format!("left-pad{RLO}txt.exe{ZWSP}");
+    scan.analysis.findings[0].title = format!("minimist{RLO}: Prototype Pollution");
+    scan.analysis.findings[0].rationale = format!("because{ZWSP} of it");
+    scan.analysis.sources[0].detail = format!("1 package{RLO} checked");
+    let dir = tempfile_dir();
+    let backend = Arc::new(FakeBackend {
+        scan: Some(scan),
+        ..Default::default()
+    });
+    let mut h = harness(Arc::clone(&backend), dir.path());
+    h.run_steps(2);
+    h.get_by_label("Scan this computer").click();
+    h.run_steps(1);
+    settle(&mut h);
+    // A command is shown as planned; whatever it contains is shown visibly.
+    let crafted_command = format!("npm install --global left-pad@1.3.0{ZWSP}{RLO}");
+    {
+        let app = h.state_mut();
+        let plan = app.plan.as_mut().unwrap();
+        let a = plan
+            .actions
+            .iter_mut()
+            .find(|a| a.key == "npm-global:left-pad")
+            .unwrap();
+        a.command = crafted_command.clone();
+    }
+    let raw_chars_shown = |h: &Harness<'static, App>| {
+        h.query_all_by_label_contains(&RLO.to_string()).count()
+            + h.query_all_by_label_contains(&ZWSP.to_string()).count()
+    };
+    let escapes_shown = |h: &Harness<'static, App>| h.query_all_by_label_contains(r"\u{202e}").count();
+
+    // Overview: findings and research sources.
+    h.run_steps(2);
+    assert_eq!(raw_chars_shown(&h), 0, "overview");
+    assert!(h.query_by_label_contains(r"minimist\u{202e}: Prototype").is_some());
+    assert!(h.query_by_label_contains(r"1 package\u{202e} checked").is_some());
+
+    // Findings.
+    h.get_by_label("Findings  1").click();
+    h.run_steps(2);
+    h.get_by_label_contains(r"minimist\u{202e}: Prototype").click();
+    h.run_steps(2);
+    assert_eq!(raw_chars_shown(&h), 0, "findings");
+    h.get_by_label(r"because\u{200b} of it");
+
+    // Updates list, then the confirmation dialog.
+    h.get_by_label("Updates  2").click();
+    h.run_steps(2);
+    assert_eq!(raw_chars_shown(&h), 0, "updates");
+    let before = escapes_shown(&h);
+    h.get_by_label("Install selected (2)").click();
+    h.run_steps(2);
+    assert!(h.state().confirm_open);
+    assert_eq!(raw_chars_shown(&h), 0, "confirmation dialog");
+    assert_eq!(
+        escapes_shown(&h) - before,
+        2,
+        "the dialog shows the title and the command with the escape"
+    );
+    assert_eq!(
+        h.query_all_by_label(r"left-pad\u{202e}txt.exe\u{200b} 1.0.0 → 1.3.0")
+            .count(),
+        2,
+        "the title in the list and in the dialog"
+    );
+    assert!(
+        h.query_all_by_label_contains("hidden or control characters").count() >= 1,
+        "a command with hidden characters is flagged"
+    );
+
+    // What is shown changes; what is planned and run does not.
+    h.get_by_label("Install now").click();
+    h.run_steps(1);
+    settle(&mut h);
+    let planned = h.state().selected_plan().unwrap();
+    assert!(planned.actions.iter().any(|a| a.command == crafted_command));
+    assert!(planned.actions.iter().any(|a| a.title.contains(RLO)));
+
+    // Activity: results and the log.
+    assert_eq!(h.state().tab, Tab::Activity);
+    h.run_steps(2);
+    assert_eq!(raw_chars_shown(&h), 0, "activity");
+    assert!(escapes_shown(&h) >= 2, "result row and log line");
 }

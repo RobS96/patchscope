@@ -2,7 +2,7 @@
 //! COM API, driven through PowerShell).
 
 use super::{Context, ListResult, Manager, mins, parse_fixed_width_table, run_list};
-use crate::exec::{CommandRunner, CommandSpec};
+use crate::exec::{CommandRunner, CommandSpec, windows_dir, windows_powershell_program};
 use crate::model::{AvailableUpdate, ManagerId, OsFamily, Package, UpdateKind};
 use serde::Deserialize;
 
@@ -16,6 +16,10 @@ const WINGET_NO_APPLICABLE_UPDATE: i32 = 0x8A15_002Bu32 as i32;
 
 const WINGET_COMMON: [&str; 2] = ["--accept-source-agreements", "--disable-interactivity"];
 
+/// winget stays a bare name: it is a per-user App Execution Alias (in
+/// `%LOCALAPPDATA%\Microsoft\WindowsApps`) with no fixed system path, and
+/// its installs never need patchscope to be elevated (each installer asks
+/// UAC itself), unlike Chocolatey and Windows Update below.
 fn winget(args: &[&str]) -> CommandSpec {
     let mut a: Vec<&str> = args.to_vec();
     a.extend(WINGET_COMMON);
@@ -98,6 +102,25 @@ impl Manager for Winget {
 
 pub struct Chocolatey;
 
+/// `choco.exe` for a given `%ProgramData%`, where the Chocolatey installer
+/// puts it: `%ProgramData%\chocolatey\bin\choco.exe`. Its commands run as
+/// Administrator (patchscope runs elevated as a whole), so it is named by
+/// absolute path, not looked up on PATH. `ChocolateyInstall` is not used:
+/// it is an ordinary environment variable that a user-level setting can
+/// point at a folder the user can write, and an absolute path there is no
+/// safer. A Chocolatey installed elsewhere is still found on PATH but its
+/// commands fail with "not found", naming this path.
+pub(crate) fn choco_program_for(program_data: Option<&str>) -> String {
+    format!(
+        r"{}\chocolatey\bin\choco.exe",
+        windows_dir(program_data, r"C:\ProgramData")
+    )
+}
+
+fn choco(args: &[&str]) -> CommandSpec {
+    CommandSpec::new(&choco_program_for(std::env::var("ProgramData").ok().as_deref()), args)
+}
+
 /// `choco list -r` → `name|version`; `choco outdated -r` →
 /// `name|current|available|pinned`.
 pub(crate) fn parse_choco_pipes(text: &str) -> Vec<Vec<String>> {
@@ -114,11 +137,25 @@ impl Manager for Chocolatey {
     fn supported_on(&self, os: OsFamily) -> bool {
         os == OsFamily::Windows
     }
+    /// For the availability probe only; commands use [`choco_program_for`].
     fn program(&self) -> &'static str {
         "choco"
     }
+    fn version(&self, runner: &dyn CommandRunner) -> Option<String> {
+        let out = runner
+            .run(&choco(&["--version"]).timeout(std::time::Duration::from_secs(30)))
+            .ok()?;
+        out.success()
+            .then(|| {
+                out.stdout
+                    .lines()
+                    .find(|l| !l.trim().is_empty())
+                    .map(|l| l.trim().to_string())
+            })
+            .flatten()
+    }
     fn installed(&self, runner: &dyn CommandRunner, _ctx: &Context) -> ListResult<Vec<Package>> {
-        let text = run_list(runner, CommandSpec::new("choco", &["list", "-r"]).timeout(mins(5)), &[])?;
+        let text = run_list(runner, choco(&["list", "-r"]).timeout(mins(5)), &[])?;
         Ok(parse_choco_pipes(&text)
             .into_iter()
             .map(|r| Package {
@@ -132,11 +169,7 @@ impl Manager for Chocolatey {
             .collect())
     }
     fn updates(&self, runner: &dyn CommandRunner, _ctx: &Context) -> ListResult<Vec<AvailableUpdate>> {
-        let text = run_list(
-            runner,
-            CommandSpec::new("choco", &["outdated", "-r"]).timeout(mins(10)),
-            &[2],
-        )?;
+        let text = run_list(runner, choco(&["outdated", "-r"]).timeout(mins(10)), &[2])?;
         Ok(parse_choco_pipes(&text)
             .into_iter()
             .filter(|r| r.len() >= 3)
@@ -157,7 +190,7 @@ impl Manager for Chocolatey {
             .collect())
     }
     fn install_command(&self, u: &AvailableUpdate) -> CommandSpec {
-        CommandSpec::new("choco", &["upgrade", &u.id, "-y", "--no-progress"])
+        choco(&["upgrade", &u.id, "-y", "--no-progress"])
             .timeout(mins(60))
             .elevated()
     }
@@ -167,9 +200,11 @@ impl Manager for Chocolatey {
 
 pub struct WindowsUpdate;
 
+/// Windows PowerShell by absolute path: its install commands run as
+/// Administrator.
 fn powershell(script: &str) -> CommandSpec {
     CommandSpec::new(
-        "powershell",
+        &windows_powershell_program(),
         &[
             "-NoProfile",
             "-NonInteractive",
@@ -278,6 +313,8 @@ impl Manager for WindowsUpdate {
     fn supported_on(&self, os: OsFamily) -> bool {
         os == OsFamily::Windows
     }
+    /// For the availability probe only; commands use
+    /// [`windows_powershell_program`].
     fn program(&self) -> &'static str {
         "powershell"
     }
@@ -379,6 +416,39 @@ mod tests {
         let p = parse_winget_list(text);
         assert_eq!(p.len(), 2);
         assert_eq!((p[0].name.as_str(), p[0].version.as_str()), ("7zip.7zip", "24.09"));
+    }
+
+    #[test]
+    fn choco_is_named_by_absolute_path() {
+        assert_eq!(
+            choco_program_for(Some(r"D:\ProgramData")),
+            r"D:\ProgramData\chocolatey\bin\choco.exe"
+        );
+        for bad in [None, Some(""), Some("ProgramData"), Some(r"\\server\share")] {
+            assert_eq!(
+                choco_program_for(bad),
+                r"C:\ProgramData\chocolatey\bin\choco.exe",
+                "{bad:?}"
+            );
+        }
+        let u = AvailableUpdate {
+            manager: ManagerId::Chocolatey,
+            id: "git".into(),
+            name: "git".into(),
+            installed_version: Some("1".into()),
+            available_version: "2".into(),
+            kind: UpdateKind::Application,
+            security: false,
+            restart_required: false,
+            notes: None,
+        };
+        let cmd = Chocolatey.install_command(&u);
+        assert!(cmd.program.ends_with(r"\chocolatey\bin\choco.exe"), "{}", cmd.program);
+        assert_eq!(cmd.args, ["upgrade", "git", "-y", "--no-progress"]);
+        assert!(cmd.needs_elevation);
+        // The availability probe still looks for the bare name.
+        assert_eq!(Chocolatey.program(), "choco");
+        assert_eq!(WindowsUpdate.program(), "powershell");
     }
 
     #[test]

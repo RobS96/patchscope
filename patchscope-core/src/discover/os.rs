@@ -1,6 +1,6 @@
 //! Operating-system identification.
 
-use crate::exec::{CommandRunner, CommandSpec};
+use crate::exec::{CommandRunner, CommandSpec, windows_powershell_program};
 use crate::model::{OsFamily, OsInfo};
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -108,7 +108,7 @@ Select-Object ProductName,DisplayVersion,CurrentBuild,UBR,EditionID,Installation
 fn windows(runner: &dyn CommandRunner, info: &mut OsInfo, warnings: &mut Vec<String>) {
     let out = runner.run(
         &CommandSpec::new(
-            "powershell",
+            &windows_powershell_program(),
             &["-NoProfile", "-NonInteractive", "-Command", WIN_VERSION_PS],
         )
         .timeout(Duration::from_secs(60)),
