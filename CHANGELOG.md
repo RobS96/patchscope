@@ -6,6 +6,12 @@ uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- CI reports test coverage (lines, regions, functions; cargo-llvm-cov) on
+  every change and weekly, and Dependabot keeps the fuzz targets'
+  lockfile current.
+
 ## [0.1.1] - 2026-10-04
 
 ### Added

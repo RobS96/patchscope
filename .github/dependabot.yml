@@ -10,6 +10,19 @@ updates:
       default-days: 7
     open-pull-requests-limit: 10
 
+  # The fuzz targets are their own workspace with their own lockfile. One
+  # grouped pull request a week keeps it from falling behind the main
+  # lockfile without doubling the number of bump PRs.
+  - package-ecosystem: "cargo"
+    directory: "/fuzz"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7
+    groups:
+      fuzz-dependencies:
+        patterns: ["*"]
+
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
