@@ -12,7 +12,7 @@ where its knowledge stops.
 | OS name, version, build, kernel, architecture | `sw_vers` (macOS), `/etc/os-release` (Linux), the `CurrentVersion` registry key (Windows), plus `sysinfo` |
 | Model, firmware, GPUs, battery | `system_profiler` (macOS), `/sys/class/dmi` + `lspci` + `/sys/class/power_supply` (Linux), CIM `Win32_ComputerSystem`/`Win32_BIOS`/`Win32_VideoController` (Windows) |
 | CPU, memory, disks, temperatures, network interfaces | `sysinfo` |
-| Language runtimes | `python3`/`python`, `node`, `go`, `ruby`, `php` on `PATH` (on a Mac without developer tools the `/usr/bin` stubs are skipped, since running them opens an install dialog) |
+| Language runtimes | `python3`/`python`, `node`, `go`, `ruby`, `php` on `PATH` (on a Mac without developer tools the `/usr/bin` stubs are skipped, since running them opens an install dialog); `java` when `java -version` names a build with a published lifecycle (Eclipse Temurin, Amazon Corretto, Azul Zulu, Oracle JDK, Microsoft, Red Hat), matched by feature release (`1.8.0_422` is 8). Distro, Homebrew, jdk.java.net and GraalVM builds follow their packager's support and are not reported, and Java gets no patch-level finding because vendors number their builds differently from `java -version`. The macOS `/usr/bin/java` stub is skipped when no JDK is installed |
 | Installed packages and pending updates | each package manager's own listing commands (see [platform support](platform-support.md)) |
 
 ### From public sources (research)
@@ -118,7 +118,7 @@ advisory:
 | Free space on the system volume < 20 GB or < 10 % | Medium |
 | Runtime support ends within 90 days | Medium |
 | Newer version, no known advisory | Low |
-| Runtime behind the latest patch of its line | Low |
+| Runtime behind the latest patch of its line (not Java) | Low |
 | Battery worn (< 80 % capacity or service condition), sensors ≥ 95 °C | Low |
 | New major OS release available | Info |
 | A package source could not be queried | Info |

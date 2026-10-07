@@ -6,6 +6,16 @@ uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Java runtimes: `java` on `PATH` is checked against its vendor's support
+  lifecycle (Eclipse Temurin, Amazon Corretto, Azul Zulu, Oracle JDK,
+  Microsoft Build of OpenJDK, Red Hat build of OpenJDK), so a Java 8 or 11
+  past end of support is reported like any other runtime. Builds without
+  one published lifecycle (distro packages, Homebrew, jdk.java.net, GraalVM)
+  are not reported, and Java gets no patch-level finding, since vendors
+  number their builds differently from `java -version`.
+
 ## [0.1.2] - 2026-10-07
 
 ### Added

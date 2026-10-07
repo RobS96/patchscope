@@ -11,7 +11,7 @@
 //! | Low | a newer version with no known advisory; minor hardware notes |
 //! | Info | major OS upgrades available, sources that could not be queried |
 
-use crate::discover::Progress;
+use crate::discover::{Progress, runtimes};
 use crate::model::*;
 use crate::research::http::{CachedHttp, HttpClient};
 use crate::research::{eol, epss, kev, osv};
@@ -807,7 +807,10 @@ fn runtime_lifecycle_finding(rt: &Runtime, st: &eol::Status, opts: &AnalyzeOptio
             ),
             40.0,
         )
-    } else if st.behind_latest {
+    } else if st.behind_latest && !runtimes::is_java_product(&rt.product) {
+        // Java vendors number their builds their own way (Zulu 25.36.205,
+        // Corretto 25.0.4.10.1), so `java -version` can't be compared with
+        // the cycle's latest release.
         (
             Severity::Low,
             format!(
@@ -968,5 +971,34 @@ mod tests {
             sent.iter().any(|r| r.ends_with("/vulns/B1")),
             "b's only advisory is fetched although a sorts first and has more: {sent:?}"
         );
+    }
+
+    #[test]
+    fn java_lifecycle_findings_skip_patch_level() {
+        let today = util::days_from_civil(2026, 10, 7);
+        let body = br#"{"result":{"releases":[{"name":"25","eolFrom":"2033-09-30","latest":{"name":"25.36.205"}},{"name":"8","isEol":true,"eolFrom":"2026-03-31","latest":{"name":"8.80.0.17"}}]}}"#;
+        let p = eol::parse("azul-zulu", body).unwrap();
+        let rt = |version: &str| Runtime {
+            product: "azul-zulu".into(),
+            display_name: "Java (Azul Zulu)".into(),
+            version: version.into(),
+            path_command: "/usr/bin/java".into(),
+        };
+        let opts = AnalyzeOptions::default();
+        let old = rt("1.8.0_422");
+        let f = runtime_lifecycle_finding(
+            &old,
+            &eol::status(&p, eol::runtime_cycle(&old, &p).unwrap(), &old.version, today),
+            &opts,
+        )
+        .expect("Java 8 past end of life is reported");
+        assert_eq!((f.severity, f.id.as_str()), (Severity::High, "runtime:azul-zulu"));
+        assert_eq!(f.title, "Java (Azul Zulu) 8 is past end of life");
+
+        // Zulu's own build number (25.36.205) is not a Java version.
+        let cur = rt("25.0.3");
+        let st = eol::status(&p, eol::runtime_cycle(&cur, &p).unwrap(), &cur.version, today);
+        assert!(st.behind_latest, "the comparison alone would claim an update");
+        assert!(runtime_lifecycle_finding(&cur, &st, &opts).is_none());
     }
 }

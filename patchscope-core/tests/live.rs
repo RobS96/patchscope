@@ -67,6 +67,12 @@ fn endoflife_products_parse() {
         "go",
         "ruby",
         "php",
+        "eclipse-temurin",
+        "amazon-corretto",
+        "azul-zulu",
+        "oracle-jdk",
+        "microsoft-build-of-openjdk",
+        "redhat-build-of-openjdk",
     ] {
         let p = eol::fetch(&http, product).unwrap_or_else(|e| panic!("{product}: {e}"));
         assert!(!p.releases.is_empty(), "{product} has releases");
