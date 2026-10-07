@@ -186,7 +186,8 @@ pub struct Temperature {
 /// A language runtime found on `PATH`, checked against its support lifecycle.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Runtime {
-    /// endoflife.date product id: `python`, `nodejs`, `go`, `ruby`, `php`.
+    /// endoflife.date product id: `python`, `nodejs`, `go`, `ruby`, `php`,
+    /// or a Java build such as `eclipse-temurin` or `oracle-jdk`.
     pub product: String,
     pub display_name: String,
     pub version: String,

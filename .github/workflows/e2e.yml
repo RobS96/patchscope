@@ -76,6 +76,7 @@ jobs:
             ([.managers[] | select(.id == "npm-global" and .available)] | length) == 1
           ' inventory.json
           jq '{os: .os.name, model: .hardware.model, cpu: .hardware.cpu.brand,
+               runtimes: [.runtimes[] | "\(.product) \(.version)"],
                managers: [.managers[] | select(.available) | {id, installed: (.installed|length), updates: (.updates|length), error}]}' inventory.json
 
       - name: Native package manager was read

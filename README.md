@@ -149,7 +149,7 @@ More in [docs/safety.md](docs/safety.md) and [SECURITY.md](SECURITY.md).
 | Packages & apps | winget, Chocolatey | Homebrew, Mac App Store | APT, DNF, pacman, Flatpak, Snap |
 | Vulnerability matching (OSV) | npm | npm | Debian, Ubuntu, Rocky, Alma packages + npm |
 | Lifecycle (endoflife.date) | Windows 10/11, Server | macOS | Ubuntu, Debian, Fedora, RHEL, Rocky, Alma, Alpine, SUSE, Mint … |
-| Runtimes | Python, Node.js, Go, Ruby, PHP on all three |||
+| Runtimes | Python, Node.js, Go, Ruby, PHP; Java (Temurin, Corretto, Zulu, Oracle, Microsoft, Red Hat builds) on all three |||
 
 Homebrew, winget, Chocolatey, the Mac App Store, Flatpak, Snap and pacman
 are not indexed by any public vulnerability database, so for those

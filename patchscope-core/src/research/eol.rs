@@ -2,6 +2,7 @@
 //! <https://endoflife.date/docs/api/v1/>
 
 use super::http::HttpClient;
+use crate::discover::runtimes::is_java_product;
 use crate::model::{OsFamily, OsInfo, Runtime};
 use crate::util::{compare_versions, parse_date};
 use serde::Deserialize;
@@ -209,9 +210,14 @@ pub fn os_cycle<'a>(os: &OsInfo, product: &'a Product) -> Option<&'a Release> {
     }
 }
 
-/// The cycle a runtime version belongs to: Node.js by major, the others by
-/// major.minor.
+/// The cycle a runtime version belongs to: Node.js and Java by major (Java's
+/// `1.8.0_422` is release 8), the others by major.minor.
 pub fn runtime_cycle<'a>(rt: &Runtime, product: &'a Product) -> Option<&'a Release> {
+    if is_java_product(&rt.product) {
+        let v = rt.version.strip_prefix("1.").unwrap_or(&rt.version);
+        let feature: String = v.chars().take_while(char::is_ascii_digit).collect();
+        return product.releases.iter().find(|r| r.name == feature);
+    }
     let mut parts = rt.version.split('.');
     let major = parts.next()?;
     let minor = parts.next();
@@ -305,6 +311,28 @@ mod tests {
             path_command: "node".into(),
         };
         assert_eq!(runtime_cycle(&rt, &p).unwrap().name, "22");
+
+        let temurin = br#"{"result":{"releases":[{"name":"21","isEol":false,"eolFrom":"2029-12-31","latest":{"name":"21.0.8+9"}},{"name":"17","isEol":false,"eolFrom":"2027-10-31"},{"name":"11","isEol":false,"eolFrom":"2027-10-31"},{"name":"8","isEol":false,"eolFrom":"2026-11-30"},{"name":"1","isEol":true}]}}"#;
+        let p = parse("eclipse-temurin", temurin).unwrap();
+        for (version, cycle) in [("1.8.0_422", "8"), ("21.0.4", "21"), ("11", "11"), ("17-ea", "17")] {
+            let rt = Runtime {
+                product: "eclipse-temurin".into(),
+                display_name: "Java (Eclipse Temurin)".into(),
+                version: version.into(),
+                path_command: "java".into(),
+            };
+            assert_eq!(runtime_cycle(&rt, &p).unwrap().name, cycle, "{version}");
+        }
+        let rt = Runtime {
+            product: "eclipse-temurin".into(),
+            display_name: "Java (Eclipse Temurin)".into(),
+            version: "22.0.1".into(),
+            path_command: "java".into(),
+        };
+        assert!(
+            runtime_cycle(&rt, &p).is_none(),
+            "an unlisted release is not matched to another"
+        );
         assert_eq!(
             os_product(&os(OsFamily::Linux, "", None, Some(("rocky", "9.4")))),
             Some("rocky-linux")
