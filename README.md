@@ -45,7 +45,7 @@ signed [build provenance attestation](https://docs.github.com/actions/security-f
 proving it was built by this repository's CI from a signed tag:
 
 ```bash
-gh attestation verify patchscope-v0.1.1-linux-x86_64.tar.gz \
+gh attestation verify patchscope-v0.1.2-linux-x86_64.tar.gz \
   --repo RobS96/patchscope --signer-workflow RobS96/patchscope/.github/workflows/ci.yml
 sha256sum -c SHA256SUMS-linux-x86_64.txt
 ```

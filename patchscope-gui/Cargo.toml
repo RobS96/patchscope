@@ -16,7 +16,7 @@ name = "patchscope-gui"
 path = "src/main.rs"
 
 [dependencies]
-patchscope-core = { path = "../patchscope-core", version = "0.1.1" }
+patchscope-core = { path = "../patchscope-core", version = "0.1.2" }
 serde_json = "1"
 directories = "6"
 # glow, not wgpu: a 2D form-and-table UI needs no wgpu, and wgpu's D3D12
