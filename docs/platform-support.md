@@ -1,8 +1,8 @@
 # Platform support
 
 Release binaries: Windows x86_64 (10/11, Server 2019+), macOS universal
-(Intel and Apple silicon, 11+), Linux x86_64 (glibc 2.35+). Other targets
-build from source.
+(Intel and Apple silicon, 11+), Linux x86_64 and aarch64 (glibc 2.35+).
+Other targets build from source.
 
 ## Package sources
 

@@ -32,10 +32,14 @@ Get the archive for your system from the
 | Windows 10/11 (x64) | `patchscope-vX.Y.Z-windows-x86_64.zip` |
 | macOS 11+ (Intel and Apple silicon) | `patchscope-vX.Y.Z-macos-universal.tar.gz` |
 | Linux x86_64 (glibc 2.35+: Ubuntu 22.04+, Debian 12+, Fedora, Arch …) | `patchscope-vX.Y.Z-linux-x86_64.tar.gz` |
+| Linux aarch64 (glibc 2.35+: Ubuntu 22.04+, Debian 12+, Raspberry Pi OS 12+ …) | `patchscope-vX.Y.Z-linux-aarch64.tar.gz` |
 
 Each archive holds the desktop app (`patchscope-gui`), the command-line
-tool (`patchscope`), the licence, the changelog and a CycloneDX SBOM of
-every dependency inside the binaries.
+tool (`patchscope`), the licence, the changelog, a CycloneDX SBOM of every
+dependency inside the binaries and a `BUILD-INFO.txt` naming the commit,
+toolchain and runner image that built it. The two binaries' SBOMs are also
+attached to the release on their own
+(`patchscope-<version>-<platform>-<crate>.cdx.json`).
 
 <details>
 <summary>Verify the download (recommended)</summary>

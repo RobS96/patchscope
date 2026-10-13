@@ -163,6 +163,7 @@ jobs:
             done
           done 3<<'TARGETS'
           linux-x86_64 x86_64-unknown-linux-gnu
+          linux-aarch64 aarch64-unknown-linux-gnu
           macos-universal aarch64-apple-darwin
           windows-x86_64 x86_64-pc-windows-msvc
           TARGETS
@@ -195,6 +196,8 @@ jobs:
           # so they run on Debian 12, Ubuntu 22.04+, Fedora and Arch.
           - os: ubuntu-22.04
             label: linux-x86_64
+          - os: ubuntu-22.04-arm
+            label: linux-aarch64
           - os: macos-26
             label: macos-universal
           - os: windows-2025
@@ -245,12 +248,34 @@ jobs:
 
       - name: Package
         shell: bash
+        env:
+          LABEL: ${{ matrix.label }}
         run: |
           set -euo pipefail
           mkdir -p stage/sbom dist
           cp README.md LICENSE CHANGELOG.md stage/
           cp sbom-all/${{ matrix.label }}/*.cdx.json stage/sbom/
           test "$(find stage/sbom -type f | wc -l)" -eq 3
+          # What built this archive, for anyone reproducing or auditing it.
+          {
+            echo "repository: $GITHUB_REPOSITORY"
+            echo "ref: $GITHUB_REF_NAME"
+            echo "commit: $GITHUB_SHA"
+            echo "platform: $LABEL"
+            echo "runner-image: ${ImageOS:-?} ${ImageVersion:-?}"
+            rustc -vV | sed 's/^/rustc: /'
+            echo "cargo: $(cargo -V)"
+            if command -v sha256sum >/dev/null; then lock=$(sha256sum Cargo.lock); else lock=$(shasum -a 256 Cargo.lock); fi
+            echo "Cargo.lock-sha256: ${lock%% *}"
+          } > stage/BUILD-INFO.txt
+          cat stage/BUILD-INFO.txt
+          # The two binaries' SBOMs also become release files of their own,
+          # under the release's naming, so a scanner can read them without
+          # unpacking anything. They are listed in the checksums and covered
+          # by the same attestation as the archive.
+          for crate in patchscope-cli patchscope-gui; do
+            cp "stage/sbom/$crate.cdx.json" "dist/patchscope-${VERSION}-${LABEL}-${crate}.cdx.json"
+          done
           if [ "$RUNNER_OS" = "Windows" ]; then
             cp target/release/patchscope.exe target/release/patchscope-gui.exe stage/
             7z a "dist/patchscope-${VERSION}-${{ matrix.label }}.zip" ./stage/*
@@ -315,12 +340,93 @@ jobs:
           fi
           echo "patchscope $crate"
 
+      # This version's CHANGELOG section becomes the release notes. Read
+      # here, once: the publish job has no checkout, by design.
+      - name: Release notes
+        if: matrix.label == 'linux-x86_64'
+        shell: bash
+        run: |
+          set -euo pipefail
+          crate=$(sed -n '/^\[workspace\.package\]/,/^\[/s/^version = "\(.*\)"$/\1/p' Cargo.toml)
+          awk -v heading="## [$crate] - " '
+            index($0, heading) == 1 { on = 1; next }
+            /^## \[/ { on = 0 }
+            on { lines[++n] = $0 }
+            END {
+              while (n && lines[n] ~ /^[[:space:]]*$/) n--
+              for (i = 1; i <= n; i++) print lines[i]
+            }' CHANGELOG.md > release-notes.md
+          if [ ! -s release-notes.md ]; then
+            # A release run has already required the heading ("Versions
+            # agree"); a dev build between a version bump and its changelog
+            # entry has nothing to show yet.
+            [ "$VERSION" = dev ] || { echo "CHANGELOG.md has no entry for $crate"; exit 1; }
+            echo "(no CHANGELOG entry for $crate yet)" > release-notes.md
+          fi
+          cat release-notes.md
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: matrix.label == 'linux-x86_64'
+        with:
+          name: release-notes
+          path: release-notes.md
+          if-no-files-found: error
+          retention-days: 7
+
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: dist-${{ matrix.label }}
           path: dist/
           if-no-files-found: error
           retention-days: 7
+
+  # The archives, run where they were not built: the x86_64 half of the
+  # universal binary (the macOS package job runs on Apple silicon), a newer
+  # glibc than the one built against, and an older Windows, and the aarch64 Linux archive on
+  # an Arm runner.
+  # Download, unpack, run. A release waits for these as well.
+  smoke:
+    name: Smoke (${{ matrix.os }})
+    needs: package
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15-intel
+            label: macos-universal
+          - os: ubuntu-26.04
+            label: linux-x86_64
+          - os: ubuntu-24.04-arm
+            label: linux-aarch64
+          - os: windows-2022
+            label: windows-x86_64
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: dist-${{ matrix.label }}
+          path: dist
+
+      - name: The packaged CLI runs here too
+        shell: bash
+        run: |
+          set -euo pipefail
+          uname -m
+          mkdir unpacked
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            7z x dist/patchscope-*.zip -ounpacked >/dev/null
+            bin=unpacked/patchscope.exe
+          else
+            tar -xzf dist/patchscope-*.tar.gz -C unpacked
+            bin=unpacked/patchscope
+          fi
+          "$bin" --version
+          # A real inventory of this runner, offline: it must name the OS
+          # and see a CPU and memory.
+          "$bin" discover --manager npm-global --format json -o inventory.json
+          jq -e '.os.name != "" and .hardware.cpu.logical_cores > 0 and .hardware.memory.total_bytes > 0' inventory.json
+          cat unpacked/BUILD-INFO.txt
 
   # Runs no code from the repository or its dependencies: it downloads what
   # the package jobs built, attests it and publishes. The write permissions
@@ -437,9 +543,9 @@ jobs:
     if: >-
       always() && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
       && needs.test.result == 'success' && needs.msrv.result == 'success'
-      && needs.package.result == 'success'
+      && needs.package.result == 'success' && needs.smoke.result == 'success'
       && (needs.sign-macos.result == 'success' || needs.sign-macos.result == 'skipped')
-    needs: [test, msrv, package, sign-macos]
+    needs: [test, msrv, package, smoke, sign-macos]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -477,8 +583,14 @@ jobs:
           path: dist
           merge-multiple: true
 
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-notes
+          path: notes
+
       - name: List release files
-        run: ls -l dist && test "$(find dist -type f | wc -l)" -eq 6
+        # 4 archives, 4 checksum files and 8 SBOMs.
+        run: ls -l dist && test "$(find dist -type f | wc -l)" -eq 16
 
       - name: Attest build provenance
         id: attest
@@ -498,7 +610,7 @@ jobs:
           jq -se 'length == 1 and (.[0].mediaType | startswith("application/vnd.dev.sigstore.bundle"))' "$BUNDLE" >/dev/null \
             || { echo "::error::expected exactly one Sigstore bundle in $BUNDLE"; exit 1; }
           jq -c . "$BUNDLE" > "dist/patchscope-${GITHUB_REF_NAME}-provenance.sigstore.json"
-          ls -l dist && test "$(find dist -type f | wc -l)" -eq 7
+          ls -l dist && test "$(find dist -type f | wc -l)" -eq 17
 
       - name: Create draft release, attach files, publish
         env:
@@ -506,6 +618,13 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
+          # The notes: this version's CHANGELOG section, then how to verify.
+          {
+            cat notes/release-notes.md
+            echo
+            echo "---"
+            echo "Verify a download with the SHA256SUMS file for your platform and \`gh attestation verify <file> --repo ${GITHUB_REPOSITORY} --signer-workflow ${GITHUB_REPOSITORY}/.github/workflows/ci.yml\` (add \`--bundle patchscope-${GITHUB_REF_NAME}-provenance.sigstore.json\` to use the attached attestation instead of fetching it). The \`*.cdx.json\` files are the CycloneDX SBOMs of the two binaries per platform, covered by the same attestation; \`BUILD-INFO.txt\` inside each archive records the commit, toolchain and runner image that built it."
+          } > "$RUNNER_TEMP/notes.md"
           # A re-run after a failure part-way finds the draft and completes
           # it; a release that is already public is never touched.
           if draft=$(gh release view "$GITHUB_REF_NAME" --json isDraft --jq .isDraft 2>/dev/null); then
@@ -513,7 +632,6 @@ jobs:
             gh release upload "$GITHUB_REF_NAME" --clobber dist/*
           else
             gh release create "$GITHUB_REF_NAME" --draft --verify-tag --title "$GITHUB_REF_NAME" \
-              --notes "See [CHANGELOG.md](https://github.com/${GITHUB_REPOSITORY}/blob/${GITHUB_REF_NAME}/CHANGELOG.md) for details. Verify a download with the SHA256SUMS file for your platform and \`gh attestation verify <archive> --repo ${GITHUB_REPOSITORY} --signer-workflow ${GITHUB_REPOSITORY}/.github/workflows/ci.yml\` (add \`--bundle patchscope-${GITHUB_REF_NAME}-provenance.sigstore.json\` to use the attached attestation instead of fetching it)." \
-              dist/*
+              --notes-file "$RUNNER_TEMP/notes.md" dist/*
           fi
           gh release edit "$GITHUB_REF_NAME" --draft=false

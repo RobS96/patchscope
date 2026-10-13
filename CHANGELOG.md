@@ -28,6 +28,23 @@ uses [Semantic Versioning](https://semver.org/).
   run starts where the last one stopped instead of from the seeds.
 - `cargo deny check advisories` runs on a schedule (`advisories.yml`), twice
   a week, so a new RustSec advisory is seen without waiting for a push.
+- Linux aarch64 release archive (`patchscope-<version>-linux-aarch64.tar.gz`,
+  glibc 2.35+: Ubuntu 22.04+, Debian 12+, Raspberry Pi OS 12+), built on
+  GitHub's Arm runner with its own SBOMs and checksums; the packaged CLI is
+  run on an Arm runner before a release is published. Not yet covered by the
+  end-to-end lifecycle test, which stays x86_64.
+- Each release also attaches the CycloneDX SBOMs of `patchscope` and
+  `patchscope-gui` for every platform as files of their own
+  (`patchscope-<version>-<platform>-<crate>.cdx.json`), listed in the
+  platform's `SHA256SUMS` and covered by the build provenance attestation.
+- `BUILD-INFO.txt` in every archive: repository, tag, commit, platform,
+  runner image, `rustc -vV`, cargo version and the SHA-256 of the
+  `Cargo.lock` the build used.
+- Release notes are the version's CHANGELOG section, followed by the
+  verification instructions.
+- Before a release is published, the packaged CLI is also run where it was
+  not built: the x86_64 slice of the universal binary on an Intel Mac, a
+  newer glibc (Ubuntu 26.04), Arm Linux and Windows Server 2022.
 
 ### Changed
 
