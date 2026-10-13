@@ -9,6 +9,11 @@ updates:
     cooldown:
       default-days: 7
     open-pull-requests-limit: 10
+    # Minor and patch bumps arrive as one pull request a week; a major bump
+    # (an API to read up on) still gets its own.
+    groups:
+      cargo-minor-and-patch:
+        update-types: ["minor", "patch"]
 
   # The fuzz targets are their own workspace with their own lockfile. One
   # grouped pull request a week keeps it from falling behind the main
@@ -23,8 +28,22 @@ updates:
       fuzz-dependencies:
         patterns: ["*"]
 
+  # The SHA-pinned actions: Dependabot rewrites the pinned commit and its
+  # version comment, in one pull request for all of them.
   - package-ecosystem: "github-actions"
     directory: "/"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7
+    groups:
+      github-actions:
+        patterns: ["*"]
+
+  # The hash-pinned PyPI wheels CI installs (zizmor, typos): the version and
+  # the wheel hashes in .github/workflow-tools/requirements.txt.
+  - package-ecosystem: "pip"
+    directory: "/.github/workflow-tools"
     schedule:
       interval: "weekly"
     cooldown:

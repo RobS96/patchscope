@@ -15,6 +15,33 @@ uses [Semantic Versioning](https://semver.org/).
   one published lifecycle (distro packages, Homebrew, jdk.java.net, GraalVM)
   are not reported, and Java gets no patch-level finding, since vendors
   number their builds differently from `java -version`.
+- Workflow lint: [zizmor](https://docs.zizmor.sh) audits the GitHub Actions
+  workflows on every change under `.github/` and weekly
+  (`workflow-lint.yml`), fails the pull request on a finding and reports to
+  code scanning. Its first run found what it is for: the `test` job
+  restored a build cache on release-tag runs as well; a tag's checks now
+  build from the locked tree alone.
+- `cargo doc` runs in CI with warnings as errors, private items included,
+  and [typos](https://github.com/crate-ci/typos) checks the spelling of
+  source, docs and comments (`_typos.toml`).
+- Weekly fuzzing keeps its corpus between runs (GitHub's cache), so each
+  run starts where the last one stopped instead of from the seeds.
+- `cargo deny check advisories` runs on a schedule (`advisories.yml`), twice
+  a week, so a new RustSec advisory is seen without waiting for a push.
+
+### Changed
+
+- CI cancels a pull request's superseded run when the branch is pushed
+  again; runs on `main` and on tags are never cancelled.
+- Dependabot groups minor and patch Cargo bumps into one weekly pull request
+  (a major bump still gets its own), groups the Actions bumps, and keeps the
+  hash-pinned PyPI tools CI installs current
+  (`.github/workflow-tools/requirements.txt`).
+
+### Fixed
+
+- Three doc comments in `patchscope-core` linked to private items; rustdoc
+  now builds without warnings.
 
 ## [0.1.2] - 2026-10-07
 

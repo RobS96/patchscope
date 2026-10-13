@@ -13,6 +13,13 @@ env:
 permissions:
   contents: read
 
+# One run per branch: a newer push to a pull request cancels the run the
+# older push started. Runs on main and on tags are never cancelled, so
+# every merge commit and every release gets its full run.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   test:
     name: Test (${{ matrix.os }})
@@ -48,6 +55,10 @@ jobs:
           # own: three OSes of per-branch caches ran the repo past GitHub's
           # 10 GB limit, which evicts the caches main needs.
           save-if: ${{ github.ref == 'refs/heads/main' }}
+          # A release run (a pushed tag) neither restores nor saves: what a
+          # tag's checks build comes from the locked tree alone, never from a
+          # cache an earlier run wrote (zizmor's cache-poisoning audit).
+          lookup-only: ${{ startsWith(github.ref, 'refs/tags/') }}
 
       - name: Format
         run: cargo fmt --all --check
@@ -57,6 +68,27 @@ jobs:
 
       - name: Test
         run: cargo test --locked --workspace
+
+      # Rustdoc warnings fail the build, private items included: a doc
+      # link to an item that was renamed is what a reader of the source
+      # hits first.
+      - name: Docs
+        if: matrix.os == 'ubuntu-latest'
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --locked --workspace --no-deps --document-private-items
+
+      # Spelling of source, docs and comments; _typos.toml lists the words
+      # that are right as written. A prebuilt wheel pinned by sha256 in
+      # .github/workflow-tools/requirements.txt, in a throwaway virtualenv.
+      - name: Typos
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/tools"
+          "$RUNNER_TEMP/tools/bin/pip" install --quiet --require-hashes --only-binary=:all: \
+            -r .github/workflow-tools/requirements.txt
+          "$RUNNER_TEMP/tools/bin/typos"
 
       - name: Build
         run: cargo build --locked --workspace --release

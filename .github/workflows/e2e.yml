@@ -230,7 +230,11 @@ jobs:
     needs: build-linux
     runs-on: ubuntu-24.04
     timeout-minutes: 60
-    container: ${{ matrix.image }}
+    # Rolling distribution tags on purpose: the point of this job is today's
+    # Debian, Ubuntu, Fedora and Arch with whatever updates they carry, in a
+    # throwaway container with a read-only token. A digest pin would freeze
+    # the very thing under test.
+    container: ${{ matrix.image }} # zizmor: ignore[unpinned-images]
     strategy:
       fail-fast: false
       matrix:
