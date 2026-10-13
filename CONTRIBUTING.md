@@ -19,7 +19,10 @@ package manager or a research source.
 
 ## Setup
 
-Rust 1.95 or newer. On Linux, the GUI needs windowing headers to build:
+Rust 1.95 or newer (the workspace's `rust-version`; it rises only in a
+minor release, only when a dependency or a feature the project needs
+requires it, and never above the second-most-recent stable Rust release).
+On Linux, the GUI needs windowing headers to build:
 
 ```bash
 sudo apt-get update && sudo apt-get install -y libx11-dev libxkbcommon-dev libxkbcommon-x11-dev libgl1-mesa-dev pkg-config
@@ -36,6 +39,13 @@ cargo fmt --all --check && cargo clippy --locked --workspace --all-targets -- -D
 When you change dependencies, also run `cargo deny check` and
 `cargo vet check` (CI does). If you touch a research client, run the live
 tests: `cargo test -p patchscope-core --test live -- --ignored`.
+
+CI also builds the docs with warnings as errors
+(`RUSTDOCFLAGS='-D warnings' cargo doc --locked --workspace --no-deps --document-private-items`),
+spell-checks source and docs with [typos](https://github.com/crate-ci/typos)
+(`_typos.toml` lists the words that are right as written), and audits any
+change under `.github/` with [zizmor](https://docs.zizmor.sh), failing the
+pull request on a finding. `pip install typos zizmor` gives you both locally.
 
 ## Rules for changes that touch the system
 

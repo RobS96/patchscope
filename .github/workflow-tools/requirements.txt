@@ -1,0 +1,14 @@
+# Tools CI installs from PyPI as prebuilt wheels, pinned by version and by the
+# sha256 of each wheel (pip install --require-hashes --only-binary=:all:), into
+# a throwaway virtualenv. Dependabot (pip, this directory) keeps them current.
+#
+# zizmor: static analysis of the GitHub Actions workflows (workflow-lint.yml).
+# https://docs.zizmor.sh
+zizmor==1.30.1 \
+    --hash=sha256:eee12266b793cb87ad4a7e3af2e72404f8a63e3de5eb099b80bf7b1cfd232a8e \
+    --hash=sha256:92906f448365672ebb657fb50d36f997290a3aaba8cac723214741ea9054845d
+# typos: spelling of source, docs and comments (ci.yml; _typos.toml lists the
+# words that are right as written). https://github.com/crate-ci/typos
+typos==1.50.3 \
+    --hash=sha256:c26ab14bad1464c9c8931db5e4ca4d1864c00f47362e4ce5ce1f8627074eb524 \
+    --hash=sha256:7873bf6f5deac401d7bc13c79868a6a56ba6fca38a33a92d07eebba2e6564fbd

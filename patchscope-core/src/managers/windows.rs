@@ -137,7 +137,7 @@ impl Manager for Chocolatey {
     fn supported_on(&self, os: OsFamily) -> bool {
         os == OsFamily::Windows
     }
-    /// For the availability probe only; commands use [`choco_program_for`].
+    /// For the availability probe only; commands use `choco_program_for`.
     fn program(&self) -> &'static str {
         "choco"
     }
@@ -314,7 +314,7 @@ impl Manager for WindowsUpdate {
         os == OsFamily::Windows
     }
     /// For the availability probe only; commands use
-    /// [`windows_powershell_program`].
+    /// `windows_powershell_program`.
     fn program(&self) -> &'static str {
         "powershell"
     }

@@ -1,0 +1,16 @@
+# typos (https://github.com/crate-ci/typos): spelling of source, docs and
+# comments, run by CI. Entries here are words typos would otherwise flag.
+
+[files]
+# cargo-vet's files are lists of crate names (flate2, writeable, ...).
+extend-exclude = ["supply-chain/"]
+
+[default.extend-identifiers]
+# `openssl pkcs12 -passin`
+passin = "passin"
+
+[default.extend-words]
+# `whoami /groups /fo csv` (Windows: output format)
+fo = "fo"
+# macOS 11
+sur = "sur"

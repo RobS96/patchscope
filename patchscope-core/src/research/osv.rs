@@ -111,7 +111,7 @@ fn post_batch(http: &dyn HttpClient, queries: &[(&Query, Option<&str>)]) -> Resu
 }
 
 /// Vulnerability ids affecting each query, following `next_page_token`
-/// until every query is complete (at most [`MAX_PAGES`] follow-up rounds).
+/// until every query is complete (at most `MAX_PAGES` follow-up rounds).
 /// A failed first page is an error; a failed later page keeps what was read
 /// and names the query in [`BatchOutcome::incomplete`].
 pub fn query_batch(http: &dyn HttpClient, queries: &[Query]) -> Result<BatchOutcome, String> {

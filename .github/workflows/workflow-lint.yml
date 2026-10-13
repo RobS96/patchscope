@@ -1,0 +1,71 @@
+name: Workflow lint
+
+# zizmor (https://docs.zizmor.sh) audits the workflow files themselves:
+# template injection, actions not pinned to a commit, credentials left in
+# the checkout, caches used on release runs, permissions wider than a job
+# needs and, online, actions with known vulnerabilities or impostor
+# commits. CodeQL's `actions` queries cover part of this; zizmor covers the
+# rest and fails the pull request on any finding at its default persona.
+# The findings also go to the code-scanning tab as the "zizmor" tool, apart
+# from the CodeQL results the default branch's ruleset requires.
+#
+# Weekly as well as on changes under .github/, because the online audits
+# learn about newly published advisories without a commit here.
+
+on:
+  push:
+    branches: [main]
+    paths: [".github/**"]
+  pull_request:
+    paths: [".github/**"]
+  schedule:
+    - cron: "37 5 * * 3"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  zizmor:
+    name: zizmor
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      # To upload the SARIF to code scanning.
+      security-events: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      # A prebuilt wheel from PyPI, pinned by version and sha256 in
+      # .github/workflow-tools/requirements.txt (Dependabot bumps it), into
+      # a throwaway virtualenv: seconds, and no third-party action.
+      - name: Install zizmor
+        run: |
+          set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/tools"
+          "$RUNNER_TEMP/tools/bin/pip" install --quiet --require-hashes --only-binary=:all: \
+            -r .github/workflow-tools/requirements.txt
+          "$RUNNER_TEMP/tools/bin/zizmor" --version
+
+      # The token is read-only: the online audits only read public data
+      # about the actions these workflows use.
+      - name: Audit, for code scanning
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: '"$RUNNER_TEMP/tools/bin/zizmor" --persona regular --no-progress --format sarif .github/workflows > zizmor.sarif'
+
+      - uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+        # A pull request from a fork has no write token; it still gets the gate below.
+        if: ${{ !github.event.pull_request.head.repo.fork }}
+        with:
+          sarif_file: zizmor.sarif
+          category: zizmor
+
+      # The gate: zizmor exits non-zero when the regular persona finds anything.
+      - name: Audit, as the gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: '"$RUNNER_TEMP/tools/bin/zizmor" --persona regular --no-progress .github/workflows'

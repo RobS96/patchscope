@@ -46,6 +46,17 @@ jobs:
           workspaces: fuzz
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
+      # The corpus libFuzzer grows is kept between runs (actions/cache, a
+      # GitHub-owned action), so the weekly fifteen minutes start where the
+      # last run stopped instead of from the seeds. Only runs on main save;
+      # a pull request restores main's corpus and leaves it as it was.
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: fuzz/corpus/${{ matrix.target }}
+          key: fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}
+          restore-keys: |
+            fuzz-corpus-${{ matrix.target }}-
+
       - name: Fuzz
         env:
           TARGET: ${{ matrix.target }}
@@ -56,6 +67,14 @@ jobs:
           if [ -d "fuzz/seeds/$TARGET" ]; then seeds=("fuzz/seeds/$TARGET"); fi
           cargo +nightly fuzz run --fuzz-dir fuzz "$TARGET" "fuzz/corpus/$TARGET" "${seeds[@]}" -- \
             -max_total_time="$SECONDS_TO_RUN" -rss_limit_mb=2048 -timeout=30
+
+      # Saved whether or not the run found a crash: the inputs it reached
+      # are worth keeping either way.
+      - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: always() && github.ref == 'refs/heads/main'
+        with:
+          path: fuzz/corpus/${{ matrix.target }}
+          key: fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}
 
       - name: Keep the crashing input
         if: failure()
