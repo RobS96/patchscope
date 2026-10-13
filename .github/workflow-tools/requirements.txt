@@ -9,6 +9,14 @@ zizmor==1.30.1 \
     --hash=sha256:92906f448365672ebb657fb50d36f997290a3aaba8cac723214741ea9054845d
 # typos: spelling of source, docs and comments (ci.yml; _typos.toml lists the
 # words that are right as written). https://github.com/crate-ci/typos
-typos==1.50.3 \
-    --hash=sha256:c26ab14bad1464c9c8931db5e4ca4d1864c00f47362e4ce5ce1f8627074eb524 \
-    --hash=sha256:7873bf6f5deac401d7bc13c79868a6a56ba6fca38a33a92d07eebba2e6564fbd
+typos==1.51.0 \
+    --hash=sha256:0ea64d0d7a0c1ec764d78e233c3cb0e02b5294887eb2e364daf80d331143ab6a \
+    --hash=sha256:277f7aa7e16953bdd8517215dd87889a8af6846b87eeccd2bed8cafdbd58f419 \
+    --hash=sha256:8694195d70121c5e8afac821bf4dce32c6b1a3e799b82381d18892ce9d4626c8 \
+    --hash=sha256:9f2d3e6ea70fc0129d5253cd710a5dfa0bc2209ca07828ba19ee60d67a0c4546 \
+    --hash=sha256:a9bcd06d77ea8e5dd670b158aa7a03d525251ac54c235f5a8d7f33a5255168b3 \
+    --hash=sha256:b73833fdcb0cdfaabc0be28213d378c09128e2936cacb1e1d1266189599714d7 \
+    --hash=sha256:eb3eeb7e619f2538fe97ff6c60872dcc6385748d43e7127ccb222348ce7d8a0d \
+    --hash=sha256:f176c06222e74ab2c4fa5668a5c678121e7ee9654fd3c4100d9196f2ef6180a6 \
+    --hash=sha256:fc90e5cb8d9d2f19026f00139aadee720982ec48af8e49c63a1d70450035bb8f \
+    --hash=sha256:fd8c1cca80efa631f10f57d8921e427921e2f4ebd56dd49f563bee57f83504b4
