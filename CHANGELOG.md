@@ -60,6 +60,15 @@ uses [Semantic Versioning](https://semver.org/).
 - Three doc comments in `patchscope-core` linked to private items; rustdoc
   now builds without warnings.
 
+### Security
+
+- rustls 0.23.46 (from 0.23.45) for RUSTSEC-2026-0346, -0347, -0348 and
+  -0349. Little of it reaches patchscope's client: it enables no `brotli`
+  certificate compression and no ECH, and never prints session values.
+  -0349 lets a forged ServerHello push later connections to classical key
+  exchange; patchscope offers X25519 first, so only a server that asks for
+  ML-KEM is affected. The bump also clears the scheduled advisory check.
+
 ## [0.1.2] - 2026-10-07
 
 ### Added
