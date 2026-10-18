@@ -4,7 +4,18 @@
 [advisories]
 version = 2
 yanked = "deny"
-ignore = []
+# RUSTSEC-2026-0370/0371/0372 (informational "unmaintained", added to the db 2026-10-16):
+# zvariant, zbus_names and zvariant_derive were merged into zbus 6.0.0 (released the same
+# day). They arrive only via eframe -> egui-winit -> accesskit_winit -> accesskit_unix ->
+# atspi -> zbus 5.19, the Linux AT-SPI accessibility bridge, so they are compiled into the
+# Linux patchscope-gui build only (none on macOS or Windows). Not a vulnerability. No upstream fix
+# yet: atspi 0.30.0 (latest) still requires zbus ^5.5. Drop these once eframe/accesskit move
+# to zbus 6. Review by 2026-11-30.
+ignore = [
+    { id = "RUSTSEC-2026-0370", reason = "zvariant unmaintained (merged into zbus 6); Linux GUI build only, via atspi; no zbus-6 atspi release yet" },
+    { id = "RUSTSEC-2026-0371", reason = "zbus_names unmaintained (merged into zbus 6); Linux GUI build only, via atspi; no zbus-6 atspi release yet" },
+    { id = "RUSTSEC-2026-0372", reason = "zvariant_derive unmaintained (merged into zbus 6); Linux GUI build only, via atspi; no zbus-6 atspi release yet" },
+]
 
 [licenses]
 version = 2
