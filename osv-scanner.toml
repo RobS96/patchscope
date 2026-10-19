@@ -1,0 +1,30 @@
+# OSV-Scanner configuration. OpenSSF Scorecard's Vulnerabilities check runs
+# OSV-Scanner over this repository and applies the osv-scanner.toml it finds
+# next to each lockfile, so this file covers Cargo.lock (fuzz/Cargo.lock does
+# not contain these crates).
+#
+# RUSTSEC-2026-0370/0371/0372 are informational "unmaintained" notices, not
+# vulnerabilities: zvariant, zbus_names and zvariant_derive were merged into
+# zbus 6.0.0. They arrive only via eframe -> egui-winit -> accesskit_winit ->
+# accesskit_unix -> atspi -> zbus 5.19, the Linux AT-SPI accessibility bridge,
+# so they are compiled into the Linux patchscope-gui build only. accesskit_unix
+# 0.24.0 and atspi 0.30.0 (the latest releases) still require zbus 5.
+#
+# deny.toml ignores the same three IDs with the same review date: keep the two
+# lists in step, and drop both once eframe/accesskit move to zbus 6. When
+# ignoreUntil passes, the Scorecard alert returns as the reminder.
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0370"
+ignoreUntil = 2026-11-30
+reason = "zvariant unmaintained (merged into zbus 6); Linux GUI build only, via atspi; no zbus-6 atspi/accesskit release yet"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0371"
+ignoreUntil = 2026-11-30
+reason = "zbus_names unmaintained (merged into zbus 6); Linux GUI build only, via atspi; no zbus-6 atspi/accesskit release yet"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0372"
+ignoreUntil = 2026-11-30
+reason = "zvariant_derive unmaintained (merged into zbus 6); Linux GUI build only, via atspi; no zbus-6 atspi/accesskit release yet"
