@@ -961,6 +961,11 @@ criteria = "safe-to-deploy"
 version = "0.103.15"
 criteria = "safe-to-deploy"
 
+[[exemptions.rustls-webpki]]
+version = "0.103.16"
+criteria = "safe-to-deploy"
+notes = "Security fix for RUSTSEC-2026-0382, NOT a code audit: added 2026-10-21 by a Claude Code session (log sweep). Session diff-read 0.103.15 -> 0.103.16: adds a hard-coded SPKI distrust list of 8 emSign intermediates + Error::CertDistrusted; no unsafe/build.rs/I/O. Remove when an imported delta audit covers it (cargo vet prune)."
+
 [[exemptions.rustversion]]
 version = "1.0.23"
 criteria = "safe-to-deploy"
@@ -1276,6 +1281,11 @@ criteria = "safe-to-deploy"
 [[exemptions.webpki-root-certs]]
 version = "1.0.9"
 criteria = "safe-to-deploy"
+
+[[exemptions.webpki-root-certs]]
+version = "1.0.10"
+criteria = "safe-to-deploy"
+notes = "Security fix for RUSTSEC-2026-0383, NOT a code audit: added 2026-10-21 by a Claude Code session (log sweep). Session diff-read 1.0.9 -> 1.0.10: removes the emSign ECC Root CA - G3 anchor only. Remove when an imported audit covers it (cargo vet prune)."
 
 [[exemptions.weezl]]
 version = "0.1.12"

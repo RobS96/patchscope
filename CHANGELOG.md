@@ -68,6 +68,12 @@ uses [Semantic Versioning](https://semver.org/).
   -0349 lets a forged ServerHello push later connections to classical key
   exchange; patchscope offers X25519 first, so only a server that asks for
   ML-KEM is affected. The bump also clears the scheduled advisory check.
+- rustls-webpki 0.103.16 (from 0.103.15) for RUSTSEC-2026-0382 and
+  webpki-root-certs 1.0.10 (from 1.0.9) for RUSTSEC-2026-0383: certificate
+  chains through the distrusted emSign intermediates are now rejected. On
+  macOS and Windows the operating system verifies patchscope's certificates
+  and webpki-root-certs is not built, so this matters on Linux, where
+  rustls-webpki builds the chain against the system roots.
 
 ## [0.1.2] - 2026-10-07
 
