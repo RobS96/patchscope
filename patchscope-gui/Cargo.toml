@@ -38,4 +38,4 @@ eframe = { version = "0.36", default-features = false, features = [
 eframe = { version = "0.36", default-features = false, features = ["wgpu"] }
 
 [dev-dependencies]
-egui_kittest = { version = "0.36", features = ["eframe"] }
+egui_kittest = { version = "0.37", features = ["eframe"] }
