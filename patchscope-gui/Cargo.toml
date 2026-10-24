@@ -21,7 +21,7 @@ serde_json = "1"
 directories = "6"
 # glow, not wgpu: a 2D form-and-table UI needs no wgpu, and wgpu's D3D12
 # backend has had windows-crate conflicts on Windows CI with eframe 0.36.
-eframe = { version = "0.36", default-features = false, features = [
+eframe = { version = "0.37", default-features = false, features = [
     "glow",
     "default_fonts",
     "accesskit",
@@ -35,7 +35,7 @@ eframe = { version = "0.36", default-features = false, features = [
 # falling back to Microsoft's WARP software rasteriser. main.rs tries it
 # first on Windows and falls back to OpenGL.
 [target.'cfg(windows)'.dependencies]
-eframe = { version = "0.36", default-features = false, features = ["wgpu"] }
+eframe = { version = "0.37", default-features = false, features = ["wgpu"] }
 
 [dev-dependencies]
 egui_kittest = { version = "0.36", features = ["eframe"] }
