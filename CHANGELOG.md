@@ -81,6 +81,11 @@ uses [Semantic Versioning](https://semver.org/).
 - tokio 1.53.3 (from 1.53.2) for RUSTSEC-2026-0386, an unsound `AsyncFd`
   constructor. Neither patchscope nor any of its dependencies calls it; the
   bump clears the scheduled advisory check.
+- async-executor 1.14.1 (from 1.14.0, which was yanked). 1.14.0 could free
+  the executor's state while a task's waker was still firing as the
+  executor shut down (a use-after-free, smol-rs/async-executor#164), and
+  1.14.1 reverts that change. Only the Linux GUI builds it, through its
+  accessibility support (accesskit, zbus).
 
 ## [0.1.2] - 2026-10-07
 

@@ -118,8 +118,9 @@ version = "2.5.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.async-executor]]
-version = "1.14.0"
+version = "1.14.1"
 criteria = "safe-to-deploy"
+notes = "Replaces yanked 1.14.0, NOT a code audit: changed 2026-11-05 by a Claude Code session (log sweep; cargo deny yanked gate). Session diff-read 1.14.0 -> 1.14.1: reverts 1.14.0's executor-state refactor (spawn and schedule clone the state Arc again, the schedule closure is 'static again, Pin-based state access and the leak() rewrite are undone) to fix a use-after-free when a Waker fires during Executor::drop (smol-rs/async-executor#164); MSRV 1.65 -> 1.63; no build.rs, no dependency change. Reached only through accesskit_unix and zbus (Linux AT-SPI). Remove when an imported audit covers it (cargo vet prune)."
 
 [[exemptions.async-io]]
 version = "2.6.0"
