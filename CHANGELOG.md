@@ -74,6 +74,18 @@ uses [Semantic Versioning](https://semver.org/).
   macOS and Windows the operating system verifies patchscope's certificates
   and webpki-root-certs is not built, so this matters on Linux, where
   rustls-webpki builds the chain against the system roots.
+- clipboard-win 5.4.3 (from 5.4.1, which was yanked). The Windows desktop
+  app's clipboard goes through it (eframe, arboard), and 5.4.3 bounds-checks
+  an HTML clipboard fragment instead of copying past the end of a malformed
+  one. Other platforms do not build it.
+- tokio 1.53.3 (from 1.53.2) for RUSTSEC-2026-0386, an unsound `AsyncFd`
+  constructor. Neither patchscope nor any of its dependencies calls it; the
+  bump clears the scheduled advisory check.
+- async-executor 1.14.1 (from 1.14.0, which was yanked). 1.14.0 could free
+  the executor's state while a task's waker was still firing as the
+  executor shut down (a use-after-free, smol-rs/async-executor#164), and
+  1.14.1 reverts that change. Only the Linux GUI builds it, through its
+  accessibility support (accesskit, zbus).
 
 ## [0.1.2] - 2026-10-07
 
