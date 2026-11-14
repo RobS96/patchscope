@@ -7,12 +7,29 @@ use patchscope_core::exec::Elevation;
 use patchscope_core::model::{Finding, OsFamily, Scan, Severity};
 use patchscope_core::plan::{Selection, UpdatePlan, build_plan};
 use patchscope_core::policy::Policy;
-use patchscope_core::util::{display_safe as safe, display_safe_multiline as safe_multiline};
+use patchscope_core::util::{display_safe, display_safe_multiline};
 use patchscope_core::{paths, report, util};
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver};
+
+/// egui 0.37's bundled fonts have no glyph for "→" (U+2192), which the core's
+/// update titles and plan lines use, so the GUI shows it as "->" instead of an
+/// empty box. Applied after the hidden-character escaping, and "->" holds no
+/// backslash, so it cannot fake an escape. The CLI and exported reports keep
+/// the arrow.
+fn drawable(s: String) -> String {
+    if s.contains('→') { s.replace('→', "->") } else { s }
+}
+
+fn safe(s: &str) -> String {
+    drawable(display_safe(s))
+}
+
+fn safe_multiline(s: &str) -> String {
+    drawable(display_safe_multiline(s))
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tab {
@@ -513,10 +530,10 @@ which updates to install; nothing changes until you confirm.",
         }
         ui.add_space(12.0);
         ui.horizontal(|ui| {
-            if ui.button("Review updates →").clicked() {
+            if ui.button("Review updates ->").clicked() {
                 self.tab = Tab::Updates;
             }
-            if ui.button("See all findings →").clicked() {
+            if ui.button("See all findings ->").clicked() {
                 self.tab = Tab::Findings;
             }
         });
@@ -762,7 +779,7 @@ which updates to install; nothing changes until you confirm.",
         };
         let mut go = false;
         let mut cancel = false;
-        let resp = egui::Modal::new(egui::Id::new("confirm-apply")).show(ctx, |ui| {
+        let resp = egui::Modal::new(egui::Id::unique("confirm-apply")).show(ctx, |ui| {
             ui.set_max_width(560.0);
             ui.heading(if self.dry_run {
                 format!("Dry run {} update(s)?", plan.actions.len())
