@@ -48,6 +48,12 @@ uses [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- Desktop app: egui/eframe 0.37 (egui_kittest 0.37 for the GUI tests).
+  egui 0.37 stopped bundling glyphs for "⚠" and "→". The app bundles egui's
+  monochrome emoji fonts again, so warning signs draw as before, and shows
+  "→" as "->" (in the desktop app only; the CLI and exported reports keep
+  the arrow). Also `serde_json` 1.0.154 and `ureq` 3.5.1: timeouts now bound
+  the TLS handshake, and connection reuse and transfer encoding are fixed.
 - CI cancels a pull request's superseded run when the branch is pushed
   again; runs on `main` and on tags are never cancelled.
 - Dependabot groups minor and patch Cargo bumps into one weekly pull request

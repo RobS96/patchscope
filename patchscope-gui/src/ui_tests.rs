@@ -119,7 +119,7 @@ pub fn recorded_scan() -> Scan {
         finding(
             "update:npm-global:left-pad",
             Severity::Low,
-            "left-pad 1.0.0 → 1.3.0",
+            "left-pad 1.0.0 -> 1.3.0",
             "npm-global:left-pad",
         ),
     ];
@@ -583,7 +583,7 @@ fn untrusted_text_shows_hidden_characters_as_escapes() {
         "the dialog shows the title and the command with the escape"
     );
     assert_eq!(
-        h.query_all_by_label(r"left-pad\u{202e}txt.exe\u{200b} 1.0.0 → 1.3.0")
+        h.query_all_by_label(r"left-pad\u{202e}txt.exe\u{200b} 1.0.0 -> 1.3.0")
             .count(),
         2,
         "the title in the list and in the dialog"

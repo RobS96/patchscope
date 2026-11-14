@@ -21,7 +21,7 @@ serde_json = "1"
 directories = "6"
 # glow, not wgpu: a 2D form-and-table UI needs no wgpu, and wgpu's D3D12
 # backend has had windows-crate conflicts on Windows CI with eframe 0.36.
-eframe = { version = "0.36", default-features = false, features = [
+eframe = { version = "0.37", default-features = false, features = [
     "glow",
     "default_fonts",
     "accesskit",
@@ -29,13 +29,19 @@ eframe = { version = "0.36", default-features = false, features = [
     "wayland",
     "x11",
 ] }
+# egui 0.37 trimmed its bundled fonts to Ubuntu-Light and its icon font, so the
+# symbols in patchscope's text (the "→" in update titles, the "⚠" in warnings)
+# would draw as empty boxes. This bundles egui's monochrome emoji fonts again,
+# as 0.36 did by default: no system-font lookup at run time, the same rendering
+# on every OS, and egui_kittest's missing-glyph panic stays on in the tests.
+egui = { version = "0.37", default-features = false, features = ["monochrome_emoji_fonts"] }
 
 # Windows also gets wgpu (Direct3D 12). It runs where OpenGL is missing or
 # too old (virtual machines, Remote Desktop, basic display drivers) by
 # falling back to Microsoft's WARP software rasteriser. main.rs tries it
 # first on Windows and falls back to OpenGL.
 [target.'cfg(windows)'.dependencies]
-eframe = { version = "0.36", default-features = false, features = ["wgpu"] }
+eframe = { version = "0.37", default-features = false, features = ["wgpu"] }
 
 [dev-dependencies]
-egui_kittest = { version = "0.36", features = ["eframe"] }
+egui_kittest = { version = "0.37", features = ["eframe"] }
