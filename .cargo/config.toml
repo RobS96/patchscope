@@ -1,0 +1,15 @@
+# Applies to every cargo invocation in this repository.
+#
+# aws-lc-sys and aws-lc-fips-sys look for a system-installed AWS-LC (their
+# `*_SYSTEM_DIR` variable, `OPENSSL_DIR`, pkg-config) and, when one qualifies,
+# link it in place of the bundled source. Turning that detection off means a
+# build always compiles the bundled source that Cargo.lock pins by checksum,
+# never whatever AWS-LC happens to be installed on the build host.
+#
+# To link a system AWS-LC on purpose, set both variables for the crate in the
+# environment, which takes precedence over this file:
+#   AWS_LC_SYS_SYSTEM_DIR=<prefix> AWS_LC_SYS_USE_SYSTEM=1
+#   AWS_LC_FIPS_SYS_SYSTEM_DIR=<prefix> AWS_LC_FIPS_SYS_USE_SYSTEM=1
+[env]
+AWS_LC_SYS_USE_SYSTEM = "0"
+AWS_LC_FIPS_SYS_USE_SYSTEM = "0"
