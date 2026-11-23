@@ -92,6 +92,11 @@ uses [Semantic Versioning](https://semver.org/).
   executor shut down (a use-after-free, smol-rs/async-executor#164), and
   1.14.1 reverts that change. Only the Linux GUI builds it, through its
   accessibility support (accesskit, zbus).
+- url 2.5.9 (from 2.5.8) for RUSTSEC-2026-0592, with form_urlencoded 1.2.3,
+  which it requires. `Url::origin()` recursed once per nested `blob:` prefix,
+  so a crafted URL could overflow the stack. Only the desktop app builds url
+  (patchscope-gui, through eframe's link opener `webbrowser`), and nothing in that
+  path calls `origin()`; the bump clears the scheduled advisory check.
 
 ## [0.1.2] - 2026-10-07
 
