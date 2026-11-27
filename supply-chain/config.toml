@@ -411,6 +411,11 @@ criteria = "safe-to-deploy"
 version = "0.2.4"
 criteria = "safe-to-deploy"
 
+[[exemptions.form_urlencoded]]
+version = "1.2.3"
+criteria = "safe-to-deploy"
+notes = "Dependency of url 2.5.9 (RUSTSEC-2026-0592), NOT a code audit: added 2026-11-23 by a Claude Code session (nightly fix). Session diff-read 1.2.2 -> 1.2.3: Serializer::for_suffix clamps an out-of-range start_position instead of panicking; percent-encoding requirement ^2.3.2; no unsafe/build.rs/I/O. Remove when an imported audit covers it (cargo vet prune)."
+
 [[exemptions.fs_extra]]
 version = "1.3.0"
 criteria = "safe-to-deploy"
@@ -1157,8 +1162,9 @@ version = "0.7.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.url]]
-version = "2.5.8"
+version = "2.5.9"
 criteria = "safe-to-deploy"
+notes = "Security fix for RUSTSEC-2026-0592, NOT a code audit: changed 2026-11-23 by a Claude Code session (nightly fix). Session diff-read 2.5.8 -> 2.5.9: Url::origin() takes a blob: URL's inner origin only for http/https/file, so it no longer recurses on nested blob: URLs; WHATWG alignment (path percent-encode set adds ^ and backtick, a backslash ends a port only for special schemes, file-URL host handling); last_slash_can_be_removed no longer quadratic; no unsafe/build.rs/I/O. Remove when an imported audit covers it (cargo vet prune)."
 
 [[exemptions.utf8-zero]]
 version = "0.8.1"
