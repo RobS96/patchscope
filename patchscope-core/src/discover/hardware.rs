@@ -7,60 +7,101 @@ use serde_json::Value;
 use std::time::Duration;
 use sysinfo::{Components, CpuRefreshKind, Disks, MemoryRefreshKind, Networks, RefreshKind, System};
 
+/// sysinfo 0.40 returns `Result` from its collectors. `Unsupported` (the data does not exist on
+/// this platform, e.g. no sensors in a VM or CI runner) keeps the 0.39 behaviour: an empty
+/// section and no warning. Any other error is reported, and the section stays at its default.
+fn note_sysinfo_error(what: &str, e: &sysinfo::Error, warnings: &mut Vec<String>) {
+    if !matches!(e, sysinfo::Error::Unsupported) {
+        warnings.push(format!("{what} unavailable: {e}"));
+    }
+}
+
 pub fn detect(runner: &dyn CommandRunner, include_identifiers: bool, warnings: &mut Vec<String>) -> HardwareInfo {
-    let sys = System::new_with_specifics(
+    let physical_cores = System::physical_core_count().ok();
+    let (cpu, memory) = match System::new_with_specifics(
         RefreshKind::nothing()
             .with_cpu(CpuRefreshKind::everything())
             .with_memory(MemoryRefreshKind::everything()),
-    );
-    let cpus = sys.cpus();
-    let cpu = CpuInfo {
-        brand: cpus.first().map(|c| c.brand().trim().to_string()).unwrap_or_default(),
-        vendor: cpus.first().map(|c| c.vendor_id().to_string()).unwrap_or_default(),
-        arch: System::cpu_arch(),
-        physical_cores: System::physical_core_count(),
-        logical_cores: cpus.len(),
-        frequency_mhz: cpus.first().map(|c| c.frequency()).unwrap_or(0),
+    ) {
+        Ok(sys) => {
+            let cpus = sys.cpus();
+            let cpu = CpuInfo {
+                brand: cpus.first().map(|c| c.brand().trim().to_string()).unwrap_or_default(),
+                vendor: cpus.first().map(|c| c.vendor_id().to_string()).unwrap_or_default(),
+                arch: System::cpu_arch(),
+                physical_cores,
+                logical_cores: cpus.len(),
+                frequency_mhz: cpus.first().map(|c| c.frequency()).unwrap_or(0),
+            };
+            let memory = MemoryInfo {
+                total_bytes: sys.total_memory(),
+                available_bytes: sys.available_memory(),
+                swap_total_bytes: sys.total_swap(),
+                swap_used_bytes: sys.used_swap(),
+            };
+            (cpu, memory)
+        }
+        Err(e) => {
+            note_sysinfo_error("CPU and memory details", &e, warnings);
+            let cpu = CpuInfo {
+                arch: System::cpu_arch(),
+                physical_cores,
+                ..Default::default()
+            };
+            (cpu, MemoryInfo::default())
+        }
     };
-    let memory = MemoryInfo {
-        total_bytes: sys.total_memory(),
-        available_bytes: sys.available_memory(),
-        swap_total_bytes: sys.total_swap(),
-        swap_used_bytes: sys.used_swap(),
+    let disks = match Disks::new_with_refreshed_list() {
+        Ok(list) => list
+            .iter()
+            .map(|d| DiskInfo {
+                name: d.name().to_string_lossy().into_owned(),
+                mount_point: d.mount_point().to_string_lossy().into_owned(),
+                file_system: d.file_system().to_string_lossy().into_owned(),
+                kind: format!("{:?}", d.kind()),
+                total_bytes: d.total_space(),
+                available_bytes: d.available_space(),
+                removable: d.is_removable(),
+            })
+            .filter(|d| d.total_bytes > 0 && !is_noise_mount(&d.mount_point))
+            .collect(),
+        Err(e) => {
+            note_sysinfo_error("Disk list", &e, warnings);
+            Vec::new()
+        }
     };
-    let disks = Disks::new_with_refreshed_list()
-        .list()
-        .iter()
-        .map(|d| DiskInfo {
-            name: d.name().to_string_lossy().into_owned(),
-            mount_point: d.mount_point().to_string_lossy().into_owned(),
-            file_system: d.file_system().to_string_lossy().into_owned(),
-            kind: format!("{:?}", d.kind()),
-            total_bytes: d.total_space(),
-            available_bytes: d.available_space(),
-            removable: d.is_removable(),
-        })
-        .filter(|d| d.total_bytes > 0 && !is_noise_mount(&d.mount_point))
-        .collect();
-    let mut network_interfaces: Vec<NetworkInterface> = Networks::new_with_refreshed_list()
-        .iter()
-        .map(|(name, data)| NetworkInterface {
-            name: name.clone(),
-            mac_address: include_identifiers.then(|| data.mac_address().to_string()),
-        })
-        .collect();
+    // 0.40 switched interface names from String to OsString.
+    let mut network_interfaces: Vec<NetworkInterface> = match Networks::new_with_refreshed_list() {
+        Ok(nets) => nets
+            .iter()
+            .map(|(name, data)| NetworkInterface {
+                name: name.to_string_lossy().into_owned(),
+                mac_address: include_identifiers.then(|| data.mac_address().to_string()),
+            })
+            .collect(),
+        Err(e) => {
+            note_sysinfo_error("Network interface list", &e, warnings);
+            Vec::new()
+        }
+    };
     network_interfaces.sort_by(|a, b| a.name.cmp(&b.name));
-    let temperatures = Components::new_with_refreshed_list()
-        .iter()
-        .filter_map(|c| {
-            c.temperature()
-                .filter(|t| t.is_finite() && *t > 0.0)
-                .map(|t| Temperature {
-                    label: c.label().to_string(),
-                    celsius: t,
-                })
-        })
-        .collect();
+    let temperatures = match Components::new_with_refreshed_list() {
+        Ok(components) => components
+            .iter()
+            .filter_map(|c| {
+                c.temperature()
+                    .filter(|t| t.is_finite() && *t > 0.0)
+                    .map(|t| Temperature {
+                        label: c.label().to_string(),
+                        celsius: t,
+                    })
+            })
+            .collect(),
+        Err(e) => {
+            note_sysinfo_error("Temperature sensors", &e, warnings);
+            Vec::new()
+        }
+    };
 
     let mut hw = HardwareInfo {
         cpu,
