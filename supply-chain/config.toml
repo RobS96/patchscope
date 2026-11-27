@@ -1154,7 +1154,7 @@ version = "0.1.5"
 criteria = "safe-to-deploy"
 
 [[exemptions.ureq]]
-version = "3.5.1"
+version = "3.5.2"
 criteria = "safe-to-deploy"
 
 [[exemptions.ureq-proto]]
