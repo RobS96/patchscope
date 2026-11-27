@@ -12,7 +12,7 @@ pub fn detect(runner: &dyn CommandRunner, warnings: &mut Vec<String>) -> OsInfo 
     let arch = sysinfo::System::cpu_arch();
     let mut info = OsInfo {
         family,
-        name: sysinfo::System::long_os_version().unwrap_or_else(|| family.to_string()),
+        name: sysinfo::System::long_os_version().unwrap_or_else(|_| family.to_string()),
         version: sysinfo::System::os_version().unwrap_or_default(),
         build: None,
         kernel,

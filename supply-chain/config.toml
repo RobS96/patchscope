@@ -1069,7 +1069,7 @@ version = "0.14.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.sysinfo]]
-version = "0.39.6"
+version = "0.40.3"
 criteria = "safe-to-deploy"
 
 [[exemptions.tempfile]]

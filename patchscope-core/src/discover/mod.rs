@@ -64,7 +64,10 @@ pub fn discover(runner: &dyn CommandRunner, opts: &DiscoverOptions, progress: Pr
         }
     }
 
-    let hostname = opts.include_identifiers.then(sysinfo::System::host_name).flatten();
+    let hostname = opts
+        .include_identifiers
+        .then(|| sysinfo::System::host_name().ok())
+        .flatten();
     progress("Discovery complete.");
     SystemReport {
         schema_version: SCHEMA_VERSION,
@@ -72,7 +75,7 @@ pub fn discover(runner: &dyn CommandRunner, opts: &DiscoverOptions, progress: Pr
         generated_at: util::now_rfc3339(),
         host: HostInfo {
             hostname,
-            uptime_secs: sysinfo::System::uptime(),
+            uptime_secs: sysinfo::System::uptime().unwrap_or(0),
             is_elevated: is_elevated(runner),
         },
         os,
